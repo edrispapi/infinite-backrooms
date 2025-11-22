@@ -254,45 +254,65 @@ export class BackroomsEngine {
       // We just clear active rooms here
       this.activeRooms.clear();
     } else {
-      // HILL Level Setup
+      // HILL Level Setup (Refined)
       // 1. Grass
-      const grassGeo = new THREE.PlaneGeometry(200, 200);
-      const grassMat = new THREE.MeshStandardMaterial({ color: 0x228B22, roughness: 0.8 });
+      const grassGeo = new THREE.PlaneGeometry(400, 400);
+      const grassMat = new THREE.MeshStandardMaterial({ color: 0x2fae4f, roughness: 0.8 });
       const grass = new THREE.Mesh(grassGeo, grassMat);
       grass.rotation.x = -Math.PI / 2;
+      grass.position.set(0, 0, 0);
       grass.receiveShadow = true;
       this.worldGroup.add(grass);
-      // 2. Dirt Path
-      const pathPoints = [
-        new THREE.Vector3(-50, 0, -50),
-        new THREE.Vector3(-30, 0, -30),
-        new THREE.Vector3(-10, 0, -10),
-        new THREE.Vector3(10, 0, 10),
-        new THREE.Vector3(30, 0, 30),
-        new THREE.Vector3(50, 0, 50)
-      ];
-      for (let i = 0; i < pathPoints.length - 1; i++) {
-        const start = pathPoints[i];
-        const end = pathPoints[i + 1];
-        const dir = new THREE.Vector3().subVectors(end, start).normalize();
-        const length = start.distanceTo(end);
-        const pathGeo = new THREE.BoxGeometry(3, 0.2, length);
-        const pathMat = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 1.0 });
-        const pathBox = new THREE.Mesh(pathGeo, pathMat);
-        const center = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
-        pathBox.position.copy(center);
-        pathBox.lookAt(center.clone().add(dir));
-        this.worldGroup.add(pathBox);
-        // Add to colliders (low obstacle/ground)
-        const box = new THREE.Box3().setFromObject(pathBox);
-        this.staticColliders.push(box);
+      const grassBox = new THREE.Box3().setFromObject(grass);
+      this.staticColliders.push(grassBox);
+      // 2. Path (Single long path)
+      const pathGeo = new THREE.PlaneGeometry(4, 200);
+      const pathMat = new THREE.MeshStandardMaterial({ color: 0xf6f1d2, roughness: 0.9 });
+      const path = new THREE.Mesh(pathGeo, pathMat);
+      path.rotation.x = -Math.PI / 2;
+      path.position.set(0, 0.01, 100); // Center at z=100, spans 0 to 200
+      path.receiveShadow = true;
+      this.worldGroup.add(path);
+      const pathBox = new THREE.Box3().setFromObject(path);
+      this.staticColliders.push(pathBox);
+      // 3. Fences (Detailed)
+      const postCount = 40;
+      const postSpacing = 200 / postCount;
+      const postGeo = new THREE.BoxGeometry(0.2, 1.4, 0.2);
+      const postMat = new THREE.MeshStandardMaterial({ color: 0xf6f5f0, roughness: 0.7 });
+      const railGeo = new THREE.BoxGeometry(200, 0.12, 0.1);
+      const railMat = new THREE.MeshStandardMaterial({ color: 0xf6f5f0, roughness: 0.7 });
+      for (let side = -1; side <= 1; side += 2) {
+        // Rail
+        const rail = new THREE.Mesh(railGeo, railMat);
+        rail.position.set(side * 3, 0.8, 100);
+        rail.rotation.y = side * Math.PI / 2; // Rotate to run along Z
+        // Actually, BoxGeometry(200, ...) is long on X by default. 
+        // If we want it along Z, we rotate Y by 90 deg.
+        rail.rotation.y = Math.PI / 2; 
+        rail.castShadow = true;
+        this.worldGroup.add(rail);
+        const railBox = new THREE.Box3().setFromObject(rail);
+        this.staticColliders.push(railBox);
+        // Posts
+        for (let i = 0; i < postCount; i++) {
+          const post = new THREE.Mesh(postGeo, postMat);
+          // Add slight irregularity to look natural
+          const z = (i * postSpacing) + (postSpacing/2); // Distribute along 0-200
+          const xOffset = Math.cos(i * 0.1) * 0.1; // Slight wobble
+          post.position.set(side * 3 + xOffset, 0.7, z);
+          post.castShadow = true;
+          this.worldGroup.add(post);
+          const postBox = new THREE.Box3().setFromObject(post);
+          this.staticColliders.push(postBox);
+        }
       }
-      // 3. House
+      // 4. House
       const houseGroup = new THREE.Group();
-      houseGroup.position.set(0, 0, 0);
+      houseGroup.position.set(0, 0, 145); // Position at path end area
       // Walls
       const wallGeo = new THREE.BoxGeometry(8, 3, 8);
-      const wallMat = new THREE.MeshStandardMaterial({ color: 0xFFFFFF });
+      const wallMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
       const houseBase = new THREE.Mesh(wallGeo, wallMat);
       houseBase.position.set(0, 1.5, 0);
       houseBase.castShadow = true;
@@ -300,32 +320,29 @@ export class BackroomsEngine {
       houseGroup.add(houseBase);
       // Roof
       const roofGeo = new THREE.ConeGeometry(6, 2, 4);
-      const roofMat = new THREE.MeshStandardMaterial({ color: 0xFF0000 });
+      const roofMat = new THREE.MeshStandardMaterial({ color: 0xff3333 });
       const roof = new THREE.Mesh(roofGeo, roofMat);
       roof.position.set(0, 4.0, 0);
       roof.rotation.y = Math.PI / 4;
       roof.castShadow = true;
       houseGroup.add(roof);
+      // Porch
+      const porchGeo = new THREE.BoxGeometry(4, 1, 3);
+      const porchMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+      const porch = new THREE.Mesh(porchGeo, porchMat);
+      porch.position.set(0, 0.5, -5.5); // Front of house
+      porch.castShadow = true;
+      porch.receiveShadow = true;
+      houseGroup.add(porch);
       this.worldGroup.add(houseGroup);
-      // House Collider
+      // House Colliders
       const houseBox = new THREE.Box3().setFromObject(houseBase);
       this.staticColliders.push(houseBox);
-      // 4. Fences
-      const fenceGeo = new THREE.BoxGeometry(0.1, 2, 3);
-      const fenceMat = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
-      for (let i = 0; i < 10; i++) {
-        const angle = (i / 10) * Math.PI * 2;
-        const dist = 15 + Math.random() * 20;
-        const fx = Math.cos(angle) * dist;
-        const fz = Math.sin(angle) * dist;
-        const fence = new THREE.Mesh(fenceGeo, fenceMat);
-        fence.position.set(fx, 1, fz);
-        fence.rotation.y = Math.random() * Math.PI;
-        fence.castShadow = true;
-        this.worldGroup.add(fence);
-        const box = new THREE.Box3().setFromObject(fence);
-        this.staticColliders.push(box);
-      }
+      // Porch Collider (Need world position)
+      // Since porch is child of houseGroup, we need to update matrix world first
+      houseGroup.updateMatrixWorld(true);
+      const porchBox = new THREE.Box3().setFromObject(porch);
+      this.staticColliders.push(porchBox);
     }
   }
   private disposeWorld() {
@@ -379,7 +396,7 @@ export class BackroomsEngine {
       sun.castShadow = true;
       this.scene.add(sun);
       this.hillLights.push(sun);
-      this.scene.fog = new THREE.FogExp2(0x87CEEB, 0.008);
+      this.scene.fog = new THREE.FogExp2(0x87CEEB, 0.008); // Haze
       this.scene.background = new THREE.Color(0x87CEEB);
     }
   }

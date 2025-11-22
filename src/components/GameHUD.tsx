@@ -54,7 +54,7 @@ export function GameHUD({ isLocked, sanity, stamina, quality, fps, proximity, le
               {/* Level Indicator */}
               <div className="flex items-center gap-2 text-xs sm:text-sm font-bold tracking-widest opacity-80 ml-2 sm:ml-4 border-l border-white/20 pl-2 sm:pl-4">
                  <span className={level === WorldType.HILL ? 'text-blue-400' : 'text-yellow-400'}>LEVEL:</span>
-                 <span>{level.toUpperCase()}</span>
+                 <span>{level === WorldType.BACKROOMS ? 'BACKROOMS' : 'Level Field – خانه روی تپه'}</span>
               </div>
             </div>
             <div className="text-xs sm:text-sm opacity-70 tracking-wider">TAPE_004 // [LIVE_FEED]</div>
@@ -81,10 +81,10 @@ export function GameHUD({ isLocked, sanity, stamina, quality, fps, proximity, le
                   <Brain className={cn("w-3 h-3 sm:w-4 sm:h-4", sanity < 30 && "text-red-500")} />
                   <span className={cn(sanity < 30 && "text-red-500")}>SANITY: {Math.floor(sanity)}%</span>
                </div>
-               <Slider
-                  value={[sanity]}
-                  max={100}
-                  step={1}
+               <Slider 
+                  value={[sanity]} 
+                  max={100} 
+                  step={1} 
                   className="w-full"
                   disabled
                />
@@ -99,15 +99,15 @@ export function GameHUD({ isLocked, sanity, stamina, quality, fps, proximity, le
                   <Zap className={cn("w-3 h-3 sm:w-4 sm:h-4", stamina < 20 && "text-red-500")} />
                   <span className={cn(stamina < 20 && "text-red-500")}>STAMINA: {Math.floor(stamina)}%</span>
                </div>
-               <Slider
-                  value={[stamina]}
-                  max={100}
-                  step={1}
+               <Slider 
+                  value={[stamina]} 
+                  max={100} 
+                  step={1} 
                   className={cn(
                     "w-full [&_[role=slider]]:border-transparent",
                     "[&_[role=slider]]:bg-white",
-                    stamina > 50 ? "[&>.relative>.absolute]:bg-green-500" :
-                    stamina > 20 ? "[&>.relative>.absolute]:bg-yellow-500" :
+                    stamina > 50 ? "[&>.relative>.absolute]:bg-green-500" : 
+                    stamina > 20 ? "[&>.relative>.absolute]:bg-yellow-500" : 
                     "[&>.relative>.absolute]:bg-red-600"
                   )}
                   disabled
