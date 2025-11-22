@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { RGBShiftShader } from 'three/examples/jsm/shaders/RGBShiftShader.js';
 // --- TYPES ---
 type EngineParams = {
   onLockChange: (isLocked: boolean) => void;
@@ -8,6 +12,8 @@ type EngineParams = {
   onProximityUpdate?: (proximity: number) => void;
   onFPSUpdate?: (fps: number) => void;
   onQualityChange?: (quality: 'high' | 'low') => void;
+  onVolumeChange?: (volume: number) => void;
+  onMute?: () => void;
 };
 type GameConfig = {
   walkSpeed: number;
@@ -40,6 +46,36 @@ function mulberry32(a: number) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+// Custom Noise Shader for VHS Static
+const NoiseShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    time: { value: 0 },
+    amount: { value: 0.02 }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float time;
+    uniform float amount;
+    varying vec2 vUv;
+    float noise(vec2 p) {
+      return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+    }
+    void main() {
+      vec4 color = texture2D(tDiffuse, vUv);
+      float n = noise(vUv * 100.0 + time);
+      color.rgb += (n - 0.5) * amount;
+      gl_FragColor = color;
+    }
+  `
+};
 export class BackroomsEngine {
   private container: HTMLElement;
   private renderer!: THREE.WebGLRenderer;
@@ -50,6 +86,9 @@ export class BackroomsEngine {
   private animationId: number | null = null;
   private params: EngineParams;
   private config: GameConfig;
+  // Post-Processing
+  private composer?: EffectComposer;
+  private vhsPasses: ShaderPass[] = [];
   // State
   private keyState = {
     forward: false,
@@ -67,6 +106,7 @@ export class BackroomsEngine {
   private audioContext: AudioContext | null = null;
   private humOscillator: OscillatorNode | null = null;
   private humGain: GainNode | null = null;
+  private baseVolume = 0.05;
   // Gameplay Stats
   private sanity = { current: 100, max: 100 };
   private lastEmittedSanity = 100;
@@ -88,7 +128,7 @@ export class BackroomsEngine {
   }
   public init() {
     // 1. Renderer
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     // Color space fix for modern three.js
@@ -105,7 +145,9 @@ export class BackroomsEngine {
     // 3. Camera
     this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 150);
     this.camera.position.set(0, this.config.playerHeight, 0);
-    // 4. Controls
+    // 4. Post-Processing
+    this.setupPostProcessing();
+    // 5. Controls
     this.controls = new PointerLockControls(this.camera, document.body);
     this.scene.add(this.controls.getObject());
     // Event Listeners
@@ -114,21 +156,37 @@ export class BackroomsEngine {
       this.resumeAudio();
     });
     this.controls.addEventListener('unlock', () => this.params.onLockChange(false));
-    // 5. Lights
+    // 6. Lights
     this.setupLights();
-    // 6. Materials
+    // 7. Materials
     this.setupMaterials();
-    // 7. Input & Resize
+    // 8. Input & Resize
     this.setupInput();
     window.addEventListener('resize', this.onWindowResize);
-    // 8. Audio
+    // 9. Audio
     this.initAudio();
-    // 9. Enemy
+    // 10. Enemy
     this.setupEnemy();
-    // 10. Initial Generation
+    // 11. Initial Generation
     this.updateRooms();
-    // 11. Start Loop
+    // 12. Start Loop
     this.start();
+  }
+  private setupPostProcessing() {
+    this.composer = new EffectComposer(this.renderer);
+    // Render Pass
+    const renderPass = new RenderPass(this.scene, this.camera);
+    this.composer.addPass(renderPass);
+    // RGB Shift (Chromatic Aberration)
+    const rgbPass = new ShaderPass(RGBShiftShader);
+    rgbPass.uniforms.amount.value = 0.0015;
+    this.composer.addPass(rgbPass);
+    this.vhsPasses.push(rgbPass);
+    // Noise Pass
+    const noisePass = new ShaderPass(NoiseShader);
+    noisePass.uniforms.amount.value = 0.03;
+    this.composer.addPass(noisePass);
+    this.vhsPasses.push(noisePass);
   }
   private setupLights() {
     const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.5);
@@ -154,13 +212,17 @@ export class BackroomsEngine {
   }
   private setupEnemy() {
     const geometry = new THREE.CapsuleGeometry(0.5, 2, 4, 8);
-    const material = new THREE.MeshStandardMaterial({ 
-      color: 0xff0000, 
+    const material = new THREE.MeshStandardMaterial({
+      color: 0xff0000,
       emissive: 0x440000,
       roughness: 0.4
     });
     this.enemy = new THREE.Mesh(geometry, material);
     this.enemy.position.set(6, 1.75, -6);
+    // Enemy Glow
+    const light = new THREE.PointLight(0xff0000, 0.5, 10);
+    light.position.set(0, 0, 0);
+    this.enemy.add(light);
     this.scene.add(this.enemy);
   }
   private setupInput() {
@@ -178,7 +240,7 @@ export class BackroomsEngine {
       this.humOscillator.frequency.setValueAtTime(60, this.audioContext.currentTime); // 60Hz hum
       // Gain node for volume control
       this.humGain = this.audioContext.createGain();
-      this.humGain.gain.setValueAtTime(0.05, this.audioContext.currentTime); // Very quiet
+      this.humGain.gain.setValueAtTime(this.baseVolume, this.audioContext.currentTime);
       // Connect
       this.humOscillator.connect(this.humGain);
       this.humGain.connect(this.audioContext.destination);
@@ -195,6 +257,40 @@ export class BackroomsEngine {
   private resumeAudio() {
     if (this.audioContext && this.audioContext.state === 'suspended') {
       this.audioContext.resume();
+    }
+  }
+  public setVolume(volume: number) {
+    if (this.humGain && this.audioContext) {
+      // volume is 0-1
+      this.humGain.gain.setValueAtTime(this.baseVolume * volume, this.audioContext.currentTime);
+    }
+    if (this.params.onVolumeChange) {
+      this.params.onVolumeChange(volume);
+    }
+  }
+  public toggleMute() {
+    if (this.audioContext) {
+      if (this.audioContext.state === 'running') {
+        this.audioContext.suspend();
+      } else {
+        this.audioContext.resume();
+      }
+      if (this.params.onMute) {
+        this.params.onMute();
+      }
+    }
+  }
+  public toggleQuality() {
+    this.quality = this.quality === 'high' ? 'low' : 'high';
+    // Update config
+    this.config.roomRadius = this.quality === 'high' ? 2 : 1;
+    this.config.cellSize = this.quality === 'high' ? 14 : 16.8;
+    this.renderer.setPixelRatio(this.quality === 'high' ? 1.5 : 1.0);
+    // Dispose and regenerate
+    this.disposeRooms();
+    this.updateRooms();
+    if (this.params.onQualityChange) {
+      this.params.onQualityChange(this.quality);
     }
   }
   private onKeyDown = (event: KeyboardEvent) => {
@@ -216,19 +312,6 @@ export class BackroomsEngine {
       case 'ShiftLeft': case 'ShiftRight': this.keyState.run = false; break;
     }
   };
-  private toggleQuality() {
-    this.quality = this.quality === 'high' ? 'low' : 'high';
-    // Update config
-    this.config.roomRadius = this.quality === 'high' ? 2 : 1;
-    this.config.cellSize = this.quality === 'high' ? 14 : 16.8;
-    this.renderer.setPixelRatio(this.quality === 'high' ? 1.5 : 1.0);
-    // Dispose and regenerate
-    this.disposeRooms();
-    this.updateRooms();
-    if (this.params.onQualityChange) {
-      this.params.onQualityChange(this.quality);
-    }
-  }
   private disposeRooms() {
     this.activeRooms.forEach(({ group, colliders }) => {
       // Remove colliders
@@ -248,12 +331,13 @@ export class BackroomsEngine {
     this.wallBoxes = [];
   }
   private onWindowResize = () => {
-    if (!this.camera || !this.renderer) return;
+    if (!this.camera || !this.renderer || !this.composer) return;
     const w = window.innerWidth;
     const h = window.innerHeight;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
+    this.composer.setSize(w, h);
   };
   public lock() {
     this.controls.lock();
@@ -266,6 +350,10 @@ export class BackroomsEngine {
     window.removeEventListener('resize', this.onWindowResize);
     document.removeEventListener('keydown', this.onKeyDown);
     document.removeEventListener('keyup', this.onKeyUp);
+    if (this.composer) {
+        this.vhsPasses.forEach(pass => pass.dispose());
+        this.composer.dispose();
+    }
     if (this.renderer) {
       this.renderer.dispose();
       this.container.removeChild(this.renderer.domElement);
@@ -290,7 +378,11 @@ export class BackroomsEngine {
       this.animationId = requestAnimationFrame(animate);
       const dt = Math.min(this.clock.getDelta(), 0.1);
       this.update(dt);
-      this.renderer.render(this.scene, this.camera);
+      if (this.composer) {
+        this.composer.render();
+      } else {
+        this.renderer.render(this.scene, this.camera);
+      }
     };
     animate();
   }
@@ -301,6 +393,12 @@ export class BackroomsEngine {
     }
   }
   private update(dt: number) {
+    // Update Shader Time
+    this.vhsPasses.forEach(pass => {
+        if (pass.uniforms.time) {
+            pass.uniforms.time.value += dt;
+        }
+    });
     if (this.controls.isLocked) {
       this.updatePlayer(dt);
       this.updateRooms();
@@ -309,18 +407,19 @@ export class BackroomsEngine {
     }
   }
   private updateStats(dt: number) {
-    // Sanity
+    // Sanity (Natural Drain)
     this.sanity.current = Math.max(0, this.sanity.current - (0.1 * dt));
-    if (Math.abs(this.sanity.current - this.lastEmittedSanity) > 0.5) {
-      this.lastEmittedSanity = this.sanity.current;
-      if (this.params.onSanityUpdate) {
-        this.params.onSanityUpdate(Math.floor(this.sanity.current));
-      }
-    }
     // Stamina
     this.updateStamina(dt);
     // FPS
     this.updateFPS(dt);
+    // Emit Sanity if changed significantly
+    if (Math.abs(this.sanity.current - this.lastEmittedSanity) > 0.5) {
+        this.lastEmittedSanity = this.sanity.current;
+        if (this.params.onSanityUpdate) {
+          this.params.onSanityUpdate(Math.floor(this.sanity.current));
+        }
+    }
   }
   private updateStamina(dt: number) {
     const isRunning = this.keyState.run && this.stamina.current > 0;
@@ -360,6 +459,10 @@ export class BackroomsEngine {
     if (this.params.onProximityUpdate) {
       this.params.onProximityUpdate(proximity);
     }
+    // Sanity Drain from Proximity
+    if (proximity > 0.5) {
+        this.sanity.current = Math.max(0, this.sanity.current - (50 * dt));
+    }
     // AI Logic
     const chaseSpeed = dist < 18 ? 5 : 0;
     if (chaseSpeed > 0) {
@@ -368,6 +471,8 @@ export class BackroomsEngine {
       const targetVelocity = direction.multiplyScalar(chaseSpeed);
       this.enemyVelocity.lerp(targetVelocity, 0.1);
       this.enemy.lookAt(playerPos.x, this.enemy.position.y, playerPos.z);
+      // Animate Scale (Breathing/Pulsing effect when chasing)
+      this.enemy.scale.lerp(new THREE.Vector3(1.2, 1.2, 1.2), 0.05);
     } else {
       // Wander
       if (this.wanderTimer <= 0) {
@@ -377,12 +482,14 @@ export class BackroomsEngine {
       }
       this.enemyVelocity.lerp(this.wanderDir, 0.05);
       this.wanderTimer -= dt;
+      // Reset Scale
+      this.enemy.scale.lerp(new THREE.Vector3(1.0, 1.0, 1.0), 0.05);
     }
     // Apply movement
     const move = this.enemyVelocity.clone().multiplyScalar(dt);
     this.enemy.position.add(move);
     // Keep enemy on floor (simple)
-    this.enemy.position.y = 1.75; 
+    this.enemy.position.y = 1.75;
   }
   // --- GAMEPLAY LOGIC ---
   private updatePlayer(dt: number) {
