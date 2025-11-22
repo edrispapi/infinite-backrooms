@@ -2,22 +2,23 @@ import React, { useEffect, useRef, useState } from 'react';
 import { BackroomsEngine } from './lib/game/BackroomsEngine';
 import { GameHUD } from './components/GameHUD';
 import { PauseMenu } from './components/PauseMenu';
+import { BootSequence } from './components/BootSequence';
 import { cn } from './lib/utils';
 export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<BackroomsEngine | null>(null);
   const [isLocked, setIsLocked] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [sanity, setSanity] = useState(100);
   useEffect(() => {
     if (!containerRef.current) return;
     // Initialize Engine
     const engine = new BackroomsEngine(containerRef.current, {
-      onLockChange: (locked) => setIsLocked(locked)
+      onLockChange: (locked) => setIsLocked(locked),
+      onSanityUpdate: (val) => setSanity(val)
     });
     engine.init();
     engineRef.current = engine;
-    // Delay showing "initialized" to allow texture/shader warmup (fake boot feeling)
-    setTimeout(() => setIsInitialized(true), 100);
     // Cleanup
     return () => {
       engine.dispose();
@@ -31,7 +32,7 @@ export default function App() {
     window.location.reload();
   };
   return (
-    <div className="relative w-full h-screen overflow-hidden bg-black">
+    <div className="relative w-screen h-screen overflow-hidden bg-black">
       {/* 3D Viewport */}
       <div ref={containerRef} className="absolute inset-0 z-0" />
       {/* CRT Effects Layer (Pointer events none to allow click-through to canvas) */}
@@ -41,20 +42,15 @@ export default function App() {
         <div className="noise opacity-[0.03] absolute inset-0" />
       </div>
       {/* Game HUD (Always rendered, visibility toggled by opacity in component) */}
-      <GameHUD isLocked={isLocked} />
+      <GameHUD isLocked={isLocked} sanity={sanity} />
       {/* Pause Menu (Interactive) */}
       {!isLocked && isInitialized && (
         <PauseMenu onResume={handleResume} onReset={handleReset} />
       )}
       {/* Boot Overlay */}
-      <div className={cn(
-        "absolute inset-0 bg-black z-[100] flex items-center justify-center transition-opacity duration-1000 pointer-events-none",
-        isInitialized ? "opacity-0" : "opacity-100"
-      )}>
-        <div className="text-br-text font-mono text-sm animate-pulse">
-          INITIALIZING REALITY ENGINE...
-        </div>
-      </div>
+      {!isInitialized && (
+        <BootSequence onComplete={() => setIsInitialized(true)} />
+      )}
     </div>
   );
 }

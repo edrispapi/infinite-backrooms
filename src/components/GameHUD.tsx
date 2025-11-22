@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Battery, Disc3 } from 'lucide-react';
+import { Battery, Disc3, Brain } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Slider } from '@/components/ui/slider';
 interface GameHUDProps {
   isLocked: boolean;
+  sanity: number;
 }
-export function GameHUD({ isLocked }: GameHUDProps) {
+export function GameHUD({ isLocked, sanity }: GameHUDProps) {
   // Simulating a diegetic camcorder interface
   const [timeString, setTimeString] = useState("00:00:00 PM");
   useEffect(() => {
@@ -29,12 +31,26 @@ export function GameHUD({ isLocked }: GameHUDProps) {
           </div>
           <div className="text-sm opacity-70 tracking-wider">TAPE_004 // [LIVE_FEED]</div>
         </div>
-        <div className="text-right flex flex-col items-end gap-1">
+        <div className="text-right flex flex-col items-end gap-2">
            <div className="flex items-center gap-2 text-xl sm:text-2xl font-bold drop-shadow-md">
              <Battery className="w-6 h-6 sm:w-8 sm:h-8 fill-white/20" />
              <span>84%</span>
            </div>
-           <div className="text-sm opacity-70">ISO 800 F/2.8</div>
+           {/* Sanity Meter */}
+           <div className="flex flex-col items-end gap-1 w-48">
+             <div className="flex items-center gap-2 text-sm font-bold tracking-widest">
+                <Brain className={cn("w-4 h-4", sanity < 30 && "animate-pulse text-red-500")} />
+                <span className={cn(sanity < 30 && "text-red-500")}>SANITY: {Math.floor(sanity)}%</span>
+             </div>
+             <Slider 
+                value={[sanity]} 
+                max={100} 
+                step={1} 
+                className="w-full"
+                disabled
+             />
+           </div>
+           <div className="text-sm opacity-70 mt-1">ISO 800 F/2.8</div>
         </div>
       </div>
       {/* Center Crosshair (Minimal) */}

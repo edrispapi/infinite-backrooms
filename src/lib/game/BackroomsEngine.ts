@@ -3,6 +3,7 @@ import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockCont
 // --- TYPES ---
 type EngineParams = {
   onLockChange: (isLocked: boolean) => void;
+  onSanityUpdate?: (sanity: number) => void;
 };
 type GameConfig = {
   walkSpeed: number;
@@ -58,6 +59,13 @@ export class BackroomsEngine {
   // Materials (Cached for performance)
   private floorMat!: THREE.MeshStandardMaterial;
   private wallMat!: THREE.MeshStandardMaterial;
+  // Audio
+  private audioContext: AudioContext | null = null;
+  private humOscillator: OscillatorNode | null = null;
+  private humGain: GainNode | null = null;
+  // Gameplay Stats
+  private sanity = { current: 100, max: 100 };
+  private lastEmittedSanity = 100;
   constructor(container: HTMLElement, params: EngineParams) {
     this.container = container;
     this.params = params;
@@ -87,7 +95,10 @@ export class BackroomsEngine {
     this.controls = new PointerLockControls(this.camera, document.body);
     this.scene.add(this.controls.getObject());
     // Event Listeners
-    this.controls.addEventListener('lock', () => this.params.onLockChange(true));
+    this.controls.addEventListener('lock', () => {
+      this.params.onLockChange(true);
+      this.resumeAudio();
+    });
     this.controls.addEventListener('unlock', () => this.params.onLockChange(false));
     // 5. Lights
     this.setupLights();
@@ -96,9 +107,11 @@ export class BackroomsEngine {
     // 7. Input & Resize
     this.setupInput();
     window.addEventListener('resize', this.onWindowResize);
-    // 8. Initial Generation
+    // 8. Audio
+    this.initAudio();
+    // 9. Initial Generation
     this.updateRooms();
-    // 9. Start Loop
+    // 10. Start Loop
     this.start();
   }
   private setupLights() {
@@ -126,6 +139,36 @@ export class BackroomsEngine {
   private setupInput() {
     document.addEventListener('keydown', this.onKeyDown);
     document.addEventListener('keyup', this.onKeyUp);
+  }
+  private initAudio() {
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      this.audioContext = new AudioContextClass();
+      // Create oscillator for the hum
+      this.humOscillator = this.audioContext.createOscillator();
+      this.humOscillator.type = 'sine';
+      this.humOscillator.frequency.setValueAtTime(60, this.audioContext.currentTime); // 60Hz hum
+      // Gain node for volume control
+      this.humGain = this.audioContext.createGain();
+      this.humGain.gain.setValueAtTime(0.05, this.audioContext.currentTime); // Very quiet
+      // Connect
+      this.humOscillator.connect(this.humGain);
+      this.humGain.connect(this.audioContext.destination);
+      // Start
+      this.humOscillator.start();
+      // Suspend initially until user interaction
+      if (this.audioContext.state === 'running') {
+        this.audioContext.suspend();
+      }
+    } catch (e) {
+      console.warn('Audio initialization failed:', e);
+    }
+  }
+  private resumeAudio() {
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      this.audioContext.resume();
+    }
   }
   private onKeyDown = (event: KeyboardEvent) => {
     switch (event.code) {
@@ -182,6 +225,10 @@ export class BackroomsEngine {
     this.wallBoxes = [];
     if (this.floorMat) this.floorMat.dispose();
     if (this.wallMat) this.wallMat.dispose();
+    // Clean up audio
+    if (this.audioContext) {
+      this.audioContext.close();
+    }
   }
   private start() {
     const animate = () => {
@@ -202,6 +249,19 @@ export class BackroomsEngine {
     if (this.controls.isLocked) {
       this.updatePlayer(dt);
       this.updateRooms();
+      this.updateSanity(dt);
+    }
+  }
+  private updateSanity(dt: number) {
+    // Degrade sanity slowly over time
+    // -0.1 per second
+    this.sanity.current = Math.max(0, this.sanity.current - (0.1 * dt));
+    // Emit if changed significantly to avoid React render spam
+    if (Math.abs(this.sanity.current - this.lastEmittedSanity) > 0.5) {
+      this.lastEmittedSanity = this.sanity.current;
+      if (this.params.onSanityUpdate) {
+        this.params.onSanityUpdate(Math.floor(this.sanity.current));
+      }
     }
   }
   // --- GAMEPLAY LOGIC ---
@@ -325,7 +385,6 @@ export class BackroomsEngine {
     ceil.position.y = wallHeight;
     group.add(ceil);
     // Outer Walls (Always generated to ensure no void peeking, though neighbors hide them)
-    // Optimization: Could skip walls shared with existing neighbors, but complexity increases.
     const wallThickness = 0.4;
     const wallGeoX = new THREE.BoxGeometry(cs, wallHeight, wallThickness);
     const wallGeoZ = new THREE.BoxGeometry(wallThickness, wallHeight, cs);
@@ -385,6 +444,6 @@ export class BackroomsEngine {
         roomColliders.push(box);
       }
     });
-    this.activeRooms.set(key, { group, colliders: roomColliders });
+    activeRooms.set(key, { group, colliders: roomColliders });
   }
 }
