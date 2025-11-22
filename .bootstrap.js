@@ -90,7 +90,9 @@ function runSetupCommands() {
     "bun add @radix-ui/react-slot@^1.1.0",
     "bun add @radix-ui/react-dialog@^1.1.1",
     "bun add @radix-ui/react-slider@^1.2.0",
-    "bun add tailwindcss@^3.4.0 -d"
+    "bun add tailwindcss@^3.4.0 -d",
+    "bun install react react-dom three framer-motion lucide-react clsx tailwind-merge @radix-ui/react-slot @radix-ui/react-dialog @radix-ui/react-slider",
+    "bun install -d vite @vitejs/plugin-react tailwindcss postcss autoprefixer @types/react @types/react-dom @types/three"
 ];
     
     if (commands.length === 0) {
