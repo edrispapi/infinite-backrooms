@@ -4,6 +4,10 @@ import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockCont
 type EngineParams = {
   onLockChange: (isLocked: boolean) => void;
   onSanityUpdate?: (sanity: number) => void;
+  onStaminaUpdate?: (stamina: number) => void;
+  onProximityUpdate?: (proximity: number) => void;
+  onFPSUpdate?: (fps: number) => void;
+  onQualityChange?: (quality: 'high' | 'low') => void;
 };
 type GameConfig = {
   walkSpeed: number;
@@ -25,7 +29,7 @@ const DEFAULT_CONFIG: GameConfig = {
   floorColor: 0xd9cf7a,
   wallColor: 0xe1d890,
   cellSize: 14,
-  roomRadius: 3
+  roomRadius: 2
 };
 // Deterministic RNG (Mulberry32)
 function mulberry32(a: number) {
@@ -66,6 +70,16 @@ export class BackroomsEngine {
   // Gameplay Stats
   private sanity = { current: 100, max: 100 };
   private lastEmittedSanity = 100;
+  private stamina = { current: 100, max: 100 };
+  private lastEmittedStamina = 100;
+  private quality: 'high' | 'low' = 'high';
+  private fpsSamples: number[] = [];
+  private lastFPSUpdate = 0;
+  // Enemy
+  private enemy?: THREE.Mesh;
+  private enemyVelocity = new THREE.Vector3();
+  private wanderTimer = 0;
+  private wanderDir = new THREE.Vector3();
   constructor(container: HTMLElement, params: EngineParams) {
     this.container = container;
     this.params = params;
@@ -109,9 +123,11 @@ export class BackroomsEngine {
     window.addEventListener('resize', this.onWindowResize);
     // 8. Audio
     this.initAudio();
-    // 9. Initial Generation
+    // 9. Enemy
+    this.setupEnemy();
+    // 10. Initial Generation
     this.updateRooms();
-    // 10. Start Loop
+    // 11. Start Loop
     this.start();
   }
   private setupLights() {
@@ -135,6 +151,17 @@ export class BackroomsEngine {
       roughness: 0.95,
       metalness: 0.0
     });
+  }
+  private setupEnemy() {
+    const geometry = new THREE.CapsuleGeometry(0.5, 2, 4, 8);
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0xff0000, 
+      emissive: 0x440000,
+      roughness: 0.4
+    });
+    this.enemy = new THREE.Mesh(geometry, material);
+    this.enemy.position.set(6, 1.75, -6);
+    this.scene.add(this.enemy);
   }
   private setupInput() {
     document.addEventListener('keydown', this.onKeyDown);
@@ -177,6 +204,7 @@ export class BackroomsEngine {
       case 'KeyA': case 'ArrowLeft': this.keyState.left = true; break;
       case 'KeyD': case 'ArrowRight': this.keyState.right = true; break;
       case 'ShiftLeft': case 'ShiftRight': this.keyState.run = true; break;
+      case 'KeyQ': this.toggleQuality(); break;
     }
   };
   private onKeyUp = (event: KeyboardEvent) => {
@@ -188,6 +216,37 @@ export class BackroomsEngine {
       case 'ShiftLeft': case 'ShiftRight': this.keyState.run = false; break;
     }
   };
+  private toggleQuality() {
+    this.quality = this.quality === 'high' ? 'low' : 'high';
+    // Update config
+    this.config.roomRadius = this.quality === 'high' ? 2 : 1;
+    this.config.cellSize = this.quality === 'high' ? 14 : 16.8;
+    this.renderer.setPixelRatio(this.quality === 'high' ? 1.5 : 1.0);
+    // Dispose and regenerate
+    this.disposeRooms();
+    this.updateRooms();
+    if (this.params.onQualityChange) {
+      this.params.onQualityChange(this.quality);
+    }
+  }
+  private disposeRooms() {
+    this.activeRooms.forEach(({ group, colliders }) => {
+      // Remove colliders
+      for (const box of colliders) {
+        const idx = this.wallBoxes.indexOf(box);
+        if (idx > -1) this.wallBoxes.splice(idx, 1);
+      }
+      // Dispose meshes
+      group.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          if (obj.geometry) obj.geometry.dispose();
+        }
+      });
+      this.scene.remove(group);
+    });
+    this.activeRooms.clear();
+    this.wallBoxes = [];
+  }
   private onWindowResize = () => {
     if (!this.camera || !this.renderer) return;
     const w = window.innerWidth;
@@ -211,18 +270,14 @@ export class BackroomsEngine {
       this.renderer.dispose();
       this.container.removeChild(this.renderer.domElement);
     }
-    // Clean up scenes
-    this.activeRooms.forEach(({ group }) => {
-      this.scene.remove(group);
-      // Traverse and dispose geometries/materials
-      group.traverse((obj) => {
-        if (obj instanceof THREE.Mesh) {
-          obj.geometry.dispose();
-        }
-      });
-    });
-    this.activeRooms.clear();
-    this.wallBoxes = [];
+    // Clean up enemy
+    if (this.enemy) {
+      this.scene.remove(this.enemy);
+      this.enemy.geometry.dispose();
+      this.enemy.material.dispose();
+      this.enemy = undefined;
+    }
+    this.disposeRooms();
     if (this.floorMat) this.floorMat.dispose();
     if (this.wallMat) this.wallMat.dispose();
     // Clean up audio
@@ -249,20 +304,85 @@ export class BackroomsEngine {
     if (this.controls.isLocked) {
       this.updatePlayer(dt);
       this.updateRooms();
-      this.updateSanity(dt);
+      this.updateStats(dt);
+      this.updateEnemy(dt);
     }
   }
-  private updateSanity(dt: number) {
-    // Degrade sanity slowly over time
-    // -0.1 per second
+  private updateStats(dt: number) {
+    // Sanity
     this.sanity.current = Math.max(0, this.sanity.current - (0.1 * dt));
-    // Emit if changed significantly to avoid React render spam
     if (Math.abs(this.sanity.current - this.lastEmittedSanity) > 0.5) {
       this.lastEmittedSanity = this.sanity.current;
       if (this.params.onSanityUpdate) {
         this.params.onSanityUpdate(Math.floor(this.sanity.current));
       }
     }
+    // Stamina
+    this.updateStamina(dt);
+    // FPS
+    this.updateFPS(dt);
+  }
+  private updateStamina(dt: number) {
+    const isRunning = this.keyState.run && this.stamina.current > 0;
+    if (isRunning) {
+      this.stamina.current = Math.max(0, this.stamina.current - (22 * dt));
+    } else {
+      this.stamina.current = Math.min(this.stamina.max, this.stamina.current + (14 * dt));
+    }
+    if (Math.abs(this.stamina.current - this.lastEmittedStamina) > 0.5) {
+      this.lastEmittedStamina = this.stamina.current;
+      if (this.params.onStaminaUpdate) {
+        this.params.onStaminaUpdate(Math.floor(this.stamina.current));
+      }
+    }
+  }
+  private updateFPS(dt: number) {
+    this.fpsSamples.push(1 / dt);
+    if (this.fpsSamples.length > 10) this.fpsSamples.shift();
+    const now = performance.now();
+    if (now - this.lastFPSUpdate > 500) {
+      const avgFPS = this.fpsSamples.reduce((a, b) => a + b, 0) / this.fpsSamples.length;
+      if (this.params.onFPSUpdate) {
+        this.params.onFPSUpdate(Math.floor(avgFPS));
+      }
+      this.lastFPSUpdate = now;
+    }
+  }
+  private updateEnemy(dt: number) {
+    if (!this.enemy || !this.controls.isLocked) return;
+    const playerPos = this.controls.getObject().position;
+    const dist = this.enemy.position.distanceTo(playerPos);
+    // Proximity / Danger
+    let proximity = 0;
+    if (dist < 4) {
+      proximity = 1 - (dist / 4); // 1 at dist=0, 0 at dist=4
+    }
+    if (this.params.onProximityUpdate) {
+      this.params.onProximityUpdate(proximity);
+    }
+    // AI Logic
+    const chaseSpeed = dist < 18 ? 5 : 0;
+    if (chaseSpeed > 0) {
+      // Chase
+      const direction = playerPos.clone().sub(this.enemy.position).normalize();
+      const targetVelocity = direction.multiplyScalar(chaseSpeed);
+      this.enemyVelocity.lerp(targetVelocity, 0.1);
+      this.enemy.lookAt(playerPos.x, this.enemy.position.y, playerPos.z);
+    } else {
+      // Wander
+      if (this.wanderTimer <= 0) {
+        this.wanderDir.random().subScalar(0.5).normalize().multiplyScalar(3);
+        this.wanderDir.y = 0; // Keep on ground plane
+        this.wanderTimer = 2 + Math.random() * 3;
+      }
+      this.enemyVelocity.lerp(this.wanderDir, 0.05);
+      this.wanderTimer -= dt;
+    }
+    // Apply movement
+    const move = this.enemyVelocity.clone().multiplyScalar(dt);
+    this.enemy.position.add(move);
+    // Keep enemy on floor (simple)
+    this.enemy.position.y = 1.75; 
   }
   // --- GAMEPLAY LOGIC ---
   private updatePlayer(dt: number) {
@@ -276,9 +396,11 @@ export class BackroomsEngine {
     if (this.keyState.back) moveDir.sub(forward);
     if (this.keyState.left) moveDir.sub(right);
     if (this.keyState.right) moveDir.add(right);
+    // Disable run if stamina depleted
+    const canRun = this.keyState.run && this.stamina.current > 0;
     if (moveDir.lengthSq() > 0) {
       moveDir.normalize();
-      const speed = this.keyState.run ? this.config.runSpeed : this.config.walkSpeed;
+      const speed = canRun ? this.config.runSpeed : this.config.walkSpeed;
       const deltaMove = moveDir.multiplyScalar(speed * dt);
       const playerPos = this.controls.getObject().position;
       const desiredPos = new THREE.Vector3(
@@ -292,15 +414,15 @@ export class BackroomsEngine {
   }
   private resolveCollisions(currentPos: THREE.Vector3, desiredPos: THREE.Vector3): THREE.Vector3 {
     const result = desiredPos.clone();
-    // Check X Movement
+    // X axis
     const testX = new THREE.Vector3(result.x, currentPos.y, currentPos.z);
     if (this.isColliding(testX)) {
-      testX.x = currentPos.x; // Revert X if colliding
+      testX.x = currentPos.x;
     }
-    // Check Z Movement (using the safe X)
+    // Z axis
     const testXZ = new THREE.Vector3(testX.x, currentPos.y, result.z);
     if (this.isColliding(testXZ)) {
-      testXZ.z = currentPos.z; // Revert Z if colliding
+      testXZ.z = currentPos.z;
     }
     result.copy(testXZ);
     return result;
@@ -308,13 +430,9 @@ export class BackroomsEngine {
   private isColliding(pos: THREE.Vector3): boolean {
     const radius = this.config.playerRadius;
     const tmpBox = new THREE.Box3();
-    // Optimization: Only check nearby walls?
-    // For now, brute force against all active wallBoxes is fine for low room count (9 rooms)
-    // With 9 rooms * ~10 walls = 90 checks per frame. Negligible.
     for (let i = 0; i < this.wallBoxes.length; i++) {
       const box = this.wallBoxes[i];
       tmpBox.copy(box);
-      // Expand wall box by player radius for simple circle-AABB check
       tmpBox.min.addScalar(-radius);
       tmpBox.max.addScalar(radius);
       if (tmpBox.containsPoint(pos)) {
@@ -357,7 +475,7 @@ export class BackroomsEngine {
         // Clean up ThreeJS objects
         group.traverse((obj) => {
             if(obj instanceof THREE.Mesh) {
-                obj.geometry.dispose();
+                if (obj.geometry) obj.geometry.dispose();
             }
         });
         this.scene.remove(group);
@@ -372,7 +490,7 @@ export class BackroomsEngine {
     this.scene.add(group);
     const roomColliders: THREE.Box3[] = [];
     const cs = this.config.cellSize;
-    const wallHeight = this.config.playerHeight * 3.0; // Higher ceilings for Backrooms feel
+    const wallHeight = this.config.playerHeight * 3.0;
     // Floor
     const floorGeo = new THREE.PlaneGeometry(cs, cs);
     const floor = new THREE.Mesh(floorGeo, this.floorMat);
@@ -384,7 +502,7 @@ export class BackroomsEngine {
     ceil.rotation.x = Math.PI / 2;
     ceil.position.y = wallHeight;
     group.add(ceil);
-    // Outer Walls (Always generated to ensure no void peeking, though neighbors hide them)
+    // Outer Walls
     const wallThickness = 0.4;
     const wallGeoX = new THREE.BoxGeometry(cs, wallHeight, wallThickness);
     const wallGeoZ = new THREE.BoxGeometry(wallThickness, wallHeight, cs);
@@ -405,7 +523,6 @@ export class BackroomsEngine {
     }
     // Procedural Inner Walls
     const rng = mulberry32(ix * 928371 + iz * 1237);
-    // Sometimes rooms are just open halls (low chance)
     const isHall = rng() > 0.8;
     const innerWallCount = isHall ? 1 : Math.floor(3 + rng() * 5);
     for (let i = 0; i < innerWallCount; i++) {
