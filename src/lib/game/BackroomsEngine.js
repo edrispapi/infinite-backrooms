@@ -6,7 +6,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { RGBShiftShader } from 'three/examples/jsm/shaders/RGBShiftShader.js';
 import { initAudio, resumeAudio, setVolume, toggleMute, setupLevelAudio, playFootstep, playBreath, updateEnemyNoise, playDeath, disposeAudio } from '../../audio.js';
-import { createRoom } from '../../worlds/backrooms.js';
+import { createBackroomsManager } from '../../worlds/backrooms.js';
 import { setupHill } from '../../worlds/hill.js';
 import { saveGame } from '../../settings.js';
 const NoiseShader = {
@@ -55,10 +55,13 @@ export default class BackroomsEngine {
       roomRadius: 2
     };
     this.keyState = { forward: false, back: false, left: false, right: false, run: false };
-    this.activeRooms = new Map();
+    // Managers & Entities
+    this.backroomsManager = null;
+    this.activeRooms = new Map(); // Legacy ref, kept for safety but unused with manager
     this.wallBoxes = [];
     this.staticColliders = [];
     this.enemies = [];
+    this.entities = []; // Interactive entities (pickups)
     this.fpsSamples = [];
     // Game State
     this.sanity = 100;
@@ -90,7 +93,9 @@ export default class BackroomsEngine {
     this.camera.position.set(0, this.config.playerHeight, 0);
     // Controls
     this.controls = new PointerLockControls(this.camera, document.body);
-    this.scene.add(this.controls.getObject());
+    /** @type {THREE.Object3D} */
+    const controlObj = this.controls.getObject();
+    this.scene.add(controlObj);
     this.controls.addEventListener('lock', () => {
       this.callbacks.onLockChange(true);
       resumeAudio();
@@ -147,22 +152,41 @@ export default class BackroomsEngine {
     this.currentLevel = level;
     this.callbacks.onLevelChange(level);
     // Reset Player
-    this.controls.getObject().position.set(0, this.config.playerHeight, 0);
-    this.controls.getObject().rotation.set(0, 0, 0);
+    /** @type {THREE.Object3D} */
+    const obj = this.controls.getObject();
+    obj.position.set(0, this.config.playerHeight, 0);
+    obj.rotation.set(0, 0, 0);
     this.disposeWorld();
     this.setupWorld();
     this.setupLights();
     this.setupEnemies();
     setupLevelAudio(level);
-    if (level === 'backrooms') this.updateRooms();
-    else this.wallBoxes = [...this.staticColliders];
+    if (level !== 'backrooms') {
+      this.wallBoxes = [...this.staticColliders];
+    }
   }
   setupWorld() {
     this.worldGroup = new THREE.Group();
     this.scene.add(this.worldGroup);
     this.staticColliders = [];
-    this.activeRooms.clear();
-    if (this.currentLevel === 'hill') {
+    this.entities = []; // Clear entities on world setup
+    if (this.currentLevel === 'backrooms') {
+      // Initialize Backrooms Manager
+      this.backroomsManager = createBackroomsManager(
+        this.scene,
+        this.wallBoxes,
+        this.config,
+        this.quality,
+        (entity) => {
+          this.entities.push(entity);
+        }
+      );
+    } else if (this.currentLevel === 'hill') {
+      // Clear manager if exists
+      if (this.backroomsManager) {
+        this.backroomsManager.dispose();
+        this.backroomsManager = null;
+      }
       this.staticColliders = setupHill(this.worldGroup);
     }
   }
@@ -170,21 +194,29 @@ export default class BackroomsEngine {
     if (this.worldGroup) {
       this.scene.remove(this.worldGroup);
       this.worldGroup.traverse(o => {
-        if (o.geometry) o.geometry.dispose();
-        if (o.material) {
-          if (Array.isArray(o.material)) o.material.forEach(m => m.dispose());
-          else o.material.dispose();
+        /** @type {THREE.Mesh} */
+        const mesh = o;
+        if (mesh.geometry) mesh.geometry.dispose();
+        if (mesh.material) {
+          if (Array.isArray(mesh.material)) mesh.material.forEach(m => m.dispose());
+          else mesh.material.dispose();
         }
       });
       this.worldGroup = null;
     }
-    this.activeRooms.forEach(r => {
-      this.scene.remove(r.group);
-      r.group.traverse(o => {
-        if (o.geometry) o.geometry.dispose();
-      });
+    if (this.backroomsManager) {
+      this.backroomsManager.dispose();
+      this.backroomsManager = null;
+    }
+    // Clear entities
+    this.entities.forEach(e => {
+      if (e.mesh) {
+        this.scene.remove(e.mesh);
+        if (e.mesh.geometry) e.mesh.geometry.dispose();
+        if (e.mesh.material) e.mesh.material.dispose();
+      }
     });
-    this.activeRooms.clear();
+    this.entities = [];
     this.wallBoxes = [];
   }
   dispose() {
@@ -245,37 +277,10 @@ export default class BackroomsEngine {
       createEnemy(0xff0000, new THREE.Vector3(20, 1.75, 10), 'stalker', { detect: 18, chase: 5, walk: 3, damageRadius: 3 });
     }
   }
-  updateRooms() {
-    const playerPos = this.controls.getObject().position;
-    const cx = Math.floor(playerPos.x / this.config.cellSize);
-    const cz = Math.floor(playerPos.z / this.config.cellSize);
-    const needed = new Set();
-    for (let dz = -this.config.roomRadius; dz <= this.config.roomRadius; dz++) {
-      for (let dx = -this.config.roomRadius; dx <= this.config.roomRadius; dx++) {
-        const key = `${cx + dx},${cz + dz}`;
-        needed.add(key);
-        if (!this.activeRooms.has(key)) {
-          const room = createRoom(cx + dx, cz + dz, this.config.cellSize, this.config.playerHeight, this.wallMat, this.floorMat);
-          this.scene.add(room.group);
-          this.activeRooms.set(key, room);
-          this.wallBoxes.push(...room.colliders);
-        }
-      }
-    }
-    for (const [key, room] of this.activeRooms) {
-      if (!needed.has(key)) {
-        this.scene.remove(room.group);
-        room.group.traverse(o => { if (o.geometry) o.geometry.dispose(); });
-        room.colliders.forEach(c => {
-          const idx = this.wallBoxes.indexOf(c);
-          if (idx > -1) this.wallBoxes.splice(idx, 1);
-        });
-        this.activeRooms.delete(key);
-      }
-    }
-  }
   updateEnemies(dt) {
-    const playerPos = this.controls.getObject().position;
+    /** @type {THREE.Object3D} */
+    const obj = this.controls.getObject();
+    const playerPos = obj.position;
     let nearest = Infinity;
     this.enemies.forEach(e => {
       const dist = e.mesh.position.distanceTo(playerPos);
@@ -338,7 +343,9 @@ export default class BackroomsEngine {
       moveDir.normalize();
       const speed = (this.keyState.run && this.stamina > 0) ? this.config.runSpeed : this.config.walkSpeed;
       const delta = moveDir.multiplyScalar(speed * dt);
-      const pos = this.controls.getObject().position;
+      /** @type {THREE.Object3D} */
+      const obj = this.controls.getObject();
+      const pos = obj.position;
       const nextPos = pos.clone().add(delta);
       // Collision
       const radius = this.config.playerRadius;
@@ -352,7 +359,7 @@ export default class BackroomsEngine {
       };
       if (checkCol(new THREE.Vector3(nextPos.x, pos.y, pos.z))) nextPos.x = pos.x;
       if (checkCol(new THREE.Vector3(nextPos.x, pos.y, nextPos.z))) nextPos.z = pos.z;
-      this.controls.getObject().position.copy(nextPos);
+      obj.position.copy(nextPos);
       // Footsteps
       if (performance.now() - this.lastFootstep > this.stepInterval * 1000) {
         playFootstep();
@@ -397,12 +404,26 @@ export default class BackroomsEngine {
     this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
     const intersects = this.raycaster.intersectObjects(this.scene.children, true);
     if (intersects.length > 0) {
-      const hit = intersects[0].object;
-      if (hit.name) {
-        this.callbacks.onInteract(hit.name);
-        if (hit.name === 'door') {
-            hit.rotation.y += Math.PI / 2;
+      const hit = intersects[0];
+      const object = hit.object;
+      const dist = hit.distance;
+      // Check Entities (Pickups)
+      const entity = this.entities.find(e => e.mesh === object);
+      if (entity && entity.type === 'pickup') {
+        if (dist < entity.radius) {
+          console.log(entity.prompt);
+          this.scene.remove(entity.mesh);
+          if (entity.mesh.geometry) entity.mesh.geometry.dispose();
+          if (entity.mesh.material) entity.mesh.material.dispose();
+          this.entities.splice(this.entities.indexOf(entity), 1);
+          this.callbacks.onInteract(`Collected: ${entity.prompt}`);
+          return;
         }
+      }
+      // Check Doors (Legacy)
+      if (object.name === 'door' && dist < 3) {
+        this.callbacks.onInteract('Door');
+        object.rotation.y += Math.PI / 2;
       }
     }
   }
@@ -421,7 +442,12 @@ export default class BackroomsEngine {
     if (this.noisePass) this.noisePass.uniforms.time.value += dt;
     if (this.controls.isLocked && !this.isDead) {
       this.updatePlayer(dt);
-      if (this.currentLevel === 'backrooms') this.updateRooms();
+      // Update Backrooms Manager
+      if (this.backroomsManager) {
+        /** @type {THREE.Object3D} */
+        const obj = this.controls.getObject();
+        this.backroomsManager.update(dt, obj.position);
+      }
       this.updateEnemies(dt);
       this.updateStats(dt);
     }
@@ -442,8 +468,10 @@ export default class BackroomsEngine {
     }
   }
   saveState() {
-    const pos = this.controls.getObject().position;
-    const rot = this.controls.getObject().rotation;
+    /** @type {THREE.Object3D} */
+    const obj = this.controls.getObject();
+    const pos = obj.position;
+    const rot = obj.rotation;
     saveGame({
       pos: { x: pos.x, y: pos.y, z: pos.z },
       rot: { x: rot.x, y: rot.y, z: rot.z },
@@ -453,8 +481,10 @@ export default class BackroomsEngine {
     });
   }
   loadState(state) {
-    if (state.pos) this.controls.getObject().position.set(state.pos.x, state.pos.y, state.pos.z);
-    if (state.rot) this.controls.getObject().rotation.set(state.rot.x, state.rot.y, state.rot.z);
+    /** @type {THREE.Object3D} */
+    const obj = this.controls.getObject();
+    if (state.pos) obj.position.set(state.pos.x, state.pos.y, state.pos.z);
+    if (state.rot) obj.rotation.set(state.rot.x, state.rot.y, state.rot.z);
     if (state.sanity) this.sanity = state.sanity;
     if (state.stamina) this.stamina = state.stamina;
     if (state.level) this.setLevel(state.level);
