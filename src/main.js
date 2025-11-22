@@ -47,11 +47,13 @@ createMenu({
     engine.quality = q;
     engine.config.roomRadius = q === 'high' ? 2 : 1;
     engine.config.cellSize = q === 'high' ? 14 : 16.8;
-    engine.renderer.setPixelRatio(q === 'high' ? 1.5 : 1.0);
-    if (engine.currentLevel === 'backrooms') {
-        engine.disposeWorld();
-        engine.setupWorld();
-        engine.updateRooms();
+    if (engine.currentLevel === 'hill') {
+      engine.renderer.setPixelRatio(q === 'high' ? 1.5 : 1.0);
+    } else if (engine.currentLevel === 'backrooms') {
+      engine.renderer.setPixelRatio(q === 'high' ? 1.5 : 1.0);
+      engine.disposeWorld();
+      engine.setupWorld();
+      engine.updateRooms(); // Force update for backrooms
     }
     saveSettings({ quality: q });
     return q;
@@ -108,11 +110,14 @@ const callbacks = {
     showDeath(true);
   },
   onInteract: (name) => {
-    if (/[\u0600-\u06FF]/.test(name)) {
-      addHint(name);
-    } else {
-      addHint(`Interacted with ${name} / تعامل با ${name}`);
-    }
+    const persianMap = { 
+      'سوئیچ به Backrooms!': 'سوئیچ به Backrooms!', 
+      'باتری چراغ‌قوه': 'باتری چراغ‌قوه', 
+      'کیت کمک‌های اولیه': 'کیت کمک‌های اولیه',
+      'Door': 'در / Door'
+    };
+    const persian = persianMap[name] || name;
+    addHint(persian, 'info');
   }
 };
 function getHUDState() {
@@ -122,7 +127,8 @@ function getHUDState() {
     fps: 60, // Updated via callback
     quality: engine ? engine.quality : 'high',
     level: engine ? engine.currentLevel : 'backrooms',
-    proximity: engine ? (1 - Math.min(engine.nearestDist, 20)/20) : 0
+    proximity: engine ? (1 - Math.min(engine.nearestDist, 20)/20) : 0,
+    flashlight: engine ? engine.flashlight.visible : false
   };
 }
 // Init
@@ -133,9 +139,29 @@ initBoot(() => {
   // Apply Settings
   engine.quality = settings.quality;
   engine.currentLevel = settings.level;
-  if (engine.controls) engine.controls.pointerSpeed = Number(settings.sensitivity);
+  if (engine.controls) {
+    engine.controls.pointerSpeed = Number(settings.sensitivity);
+    // Fallback for pointer speed if needed
+    if (!window.matchMedia('(pointer: fine)').matches) {
+       engine.controls.pointerSpeed *= 0.7;
+    }
+  }
   engine.setLevel(settings.level);
-  showStart(true);
+  // Check for saved game
+  if (loadGame()) {
+    hasStarted = false;
+    showStart(false);
+    showMenu(true); // Show menu to allow Continue
+  } else {
+    engine.reset();
+    showStart(true);
+  }
+});
+// Global ESC listener for unlocking
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape' && isLocked && engine) {
+    engine.unlock();
+  }
 });
 // Visibility & Cleanup
 document.addEventListener('visibilitychange', () => {

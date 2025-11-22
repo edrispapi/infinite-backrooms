@@ -2,7 +2,8 @@
 import * as THREE from 'three';
 /**
  * Deterministic RNG
- * @param {number} a 
+ * @param {number} a
+ * @returns {function(): number}
  */
 function mulberry32(a) {
   return function() {
@@ -14,11 +15,11 @@ function mulberry32(a) {
 }
 /**
  * Creates the Backrooms Level Manager
- * @param {THREE.Scene} scene 
- * @param {THREE.Box3[]} wallBoxes 
- * @param {Object} params 
- * @param {string} quality 
- * @param {Function} registerEntity 
+ * @param {THREE.Scene} scene
+ * @param {THREE.Box3[]} wallBoxes
+ * @param {Object} params
+ * @param {string} quality
+ * @param {Function} registerEntity
  */
 export function createBackroomsManager(scene, wallBoxes, params, quality, registerEntity) {
   const activeRooms = new Map();
@@ -28,11 +29,11 @@ export function createBackroomsManager(scene, wallBoxes, params, quality, regist
   const floorMat = new THREE.MeshStandardMaterial({ color: params.floorColor, roughness: 0.9 });
   const wallMat = new THREE.MeshStandardMaterial({ color: params.wallColor, roughness: 0.95 });
   // Emissive pit material (black hole)
-  const holeMat = new THREE.MeshStandardMaterial({ 
-    color: 0x000000, 
+  const holeMat = new THREE.MeshStandardMaterial({
+    color: 0x000000,
     roughness: 1.0,
     emissive: 0x000000,
-    emissiveIntensity: 0.1 
+    emissiveIntensity: 0.1
   });
   /**
    * Spawns interactive notes in the starting area
@@ -40,7 +41,6 @@ export function createBackroomsManager(scene, wallBoxes, params, quality, regist
   function spawnNotes() {
     const count = 3 + Math.floor(Math.random() * 3); // 3 to 5 notes
     for (let i = 0; i < count; i++) {
-      // Random position within the initial loaded area
       const ix = Math.floor((Math.random() - 0.5) * roomRadius * 2);
       const iz = Math.floor((Math.random() - 0.5) * roomRadius * 2);
       const offsetRange = cellSize * 0.4;
@@ -51,21 +51,22 @@ export function createBackroomsManager(scene, wallBoxes, params, quality, regist
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(x, 1.5, z);
       mesh.rotation.y = Math.random() * Math.PI * 2;
-      mesh.rotation.x = (Math.random() - 0.5) * 0.5; // Random tilt
+      mesh.rotation.x = (Math.random() - 0.5) * 0.5;
       scene.add(mesh);
+      mesh.updateMatrixWorld();
       registerEntity({
         type: 'pickup',
         kind: 'note',
         mesh: mesh,
         prompt: `یادداشت ${i + 1}`,
-        radius: 2.5 // Interaction radius
+        radius: 2.5
       });
     }
   }
   /**
    * Creates a single room chunk
-   * @param {number} ix 
-   * @param {number} iz 
+   * @param {number} ix
+   * @param {number} iz
    */
   function createRoom(ix, iz) {
     const key = `${ix},${iz}`;
@@ -86,15 +87,15 @@ export function createBackroomsManager(scene, wallBoxes, params, quality, regist
     ceil.rotation.x = Math.PI / 2;
     ceil.position.y = wallHeight;
     group.add(ceil);
-    // Outer Walls (Visual + Collider)
+    // Outer Walls
     const wallThickness = 0.4;
     const wallGeoX = new THREE.BoxGeometry(cellSize, wallHeight, wallThickness);
     const wallGeoZ = new THREE.BoxGeometry(wallThickness, wallHeight, cellSize);
     const wallPositions = [
-      { x: 0, y: wallHeight / 2, z: -cellSize / 2, geo: wallGeoX }, // Front
-      { x: 0, y: wallHeight / 2, z: cellSize / 2, geo: wallGeoX },  // Back
-      { x: -cellSize / 2, y: wallHeight / 2, z: 0, geo: wallGeoZ }, // Left
-      { x: cellSize / 2, y: wallHeight / 2, z: 0, geo: wallGeoZ }   // Right
+      { x: 0, y: wallHeight / 2, z: -cellSize / 2, geo: wallGeoX },
+      { x: 0, y: wallHeight / 2, z: cellSize / 2, geo: wallGeoX },
+      { x: -cellSize / 2, y: wallHeight / 2, z: 0, geo: wallGeoZ },
+      { x: cellSize / 2, y: wallHeight / 2, z: 0, geo: wallGeoZ }
     ];
     wallPositions.forEach(pos => {
       const wall = new THREE.Mesh(pos.geo, wallMat);
@@ -103,10 +104,12 @@ export function createBackroomsManager(scene, wallBoxes, params, quality, regist
       wall.receiveShadow = true;
       group.add(wall);
     });
-    // Inner Walls (Procedural)
+    // Inner Walls
     const rng = mulberry32(ix * 928371 + iz * 1237);
     const isHall = rng() > 0.8;
-    const innerWallCount = isHall ? 1 : Math.floor(3 + rng() * 5);
+    const innerWallCount = isHall 
+      ? 1 
+      : (quality === 'high' ? Math.floor(3 + rng() * 5) : Math.floor(2 + rng() * 3));
     for (let i = 0; i < innerWallCount; i++) {
       const length = 3.0 + rng() * (cellSize * 0.5);
       const horizontal = rng() > 0.5;
@@ -120,29 +123,25 @@ export function createBackroomsManager(scene, wallBoxes, params, quality, regist
       wall.position.set(x, wallHeight / 2, z);
       wall.castShadow = true;
       wall.receiveShadow = true;
-      // Chance for a "door" (just a named wall for interaction)
       if (rng() < 0.3) {
         wall.name = 'door';
       }
       group.add(wall);
     }
-    // Holes (Pits)
-    const holeCount = Math.floor(rng() * 2); // 0 or 1
+    // Holes
+    const holeCount = Math.floor(rng() * 2);
     for (let h = 0; h < holeCount; h++) {
       const hx = (rng() - 0.5) * cellSize * 0.6;
       const hz = (rng() - 0.5) * cellSize * 0.6;
-      // Visual Pit
       const holeGeo = new THREE.BoxGeometry(1.5, 2.5, 1.5);
       const hole = new THREE.Mesh(holeGeo, holeMat);
       hole.position.set(hx, -1.25, hz);
       hole.name = 'hole';
       group.add(hole);
-      // Invisible Colliders around hole to prevent falling (gameplay simplification)
       const holeSize = 1.5;
       const halfSize = holeSize / 2;
       const invGeo = new THREE.BoxGeometry(holeSize, wallHeight, 0.1);
       const invMat = new THREE.MeshBasicMaterial({ visible: false });
-      // 4 walls around the pit
       const w1 = new THREE.Mesh(invGeo, invMat); w1.position.set(hx, wallHeight/2, hz - halfSize); group.add(w1);
       const w2 = new THREE.Mesh(invGeo, invMat); w2.position.set(hx, wallHeight/2, hz + halfSize); group.add(w2);
       const invGeoZ = new THREE.BoxGeometry(0.1, wallHeight, holeSize);
@@ -153,7 +152,6 @@ export function createBackroomsManager(scene, wallBoxes, params, quality, regist
     group.updateMatrixWorld(true);
     group.traverse(obj => {
       if (obj.isMesh && obj !== floor && obj !== ceil && obj.name !== 'hole') {
-        // Only add colliders for walls/obstacles above ground
         if (obj.position.y > -1) {
           const box = new THREE.Box3().setFromObject(obj);
           roomColliders.push(box);
@@ -163,19 +161,12 @@ export function createBackroomsManager(scene, wallBoxes, params, quality, regist
     });
     activeRooms.set(key, { group, colliders: roomColliders });
   }
-  // Initialize
   spawnNotes();
   return {
-    /**
-     * Updates room loading based on player position
-     * @param {number} dt 
-     * @param {THREE.Vector3} playerPos 
-     */
     update(dt, playerPos) {
       const cx = Math.floor(playerPos.x / cellSize);
       const cz = Math.floor(playerPos.z / cellSize);
       const needed = new Set();
-      // Load needed rooms
       for (let dz = -roomRadius; dz <= roomRadius; dz++) {
         for (let dx = -roomRadius; dx <= roomRadius; dx++) {
           const key = `${cx + dx},${cz + dz}`;
@@ -183,11 +174,9 @@ export function createBackroomsManager(scene, wallBoxes, params, quality, regist
           createRoom(cx + dx, cz + dz);
         }
       }
-      // Unload distant rooms
       for (const [key, room] of activeRooms) {
         if (!needed.has(key)) {
           scene.remove(room.group);
-          // Dispose geometries
           room.group.traverse(o => {
             if (o.isMesh) {
               if (o.geometry) o.geometry.dispose();
@@ -197,7 +186,6 @@ export function createBackroomsManager(scene, wallBoxes, params, quality, regist
               }
             }
           });
-          // Remove colliders
           room.colliders.forEach(c => {
             const idx = wallBoxes.indexOf(c);
             if (idx > -1) wallBoxes.splice(idx, 1);
@@ -206,9 +194,6 @@ export function createBackroomsManager(scene, wallBoxes, params, quality, regist
         }
       }
     },
-    /**
-     * Cleans up all resources
-     */
     dispose() {
       for (const room of activeRooms.values()) {
         scene.remove(room.group);

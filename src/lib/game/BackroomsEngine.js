@@ -57,11 +57,13 @@ export default class BackroomsEngine {
     this.keyState = { forward: false, back: false, left: false, right: false, run: false };
     // Managers & Entities
     this.backroomsManager = null;
-    this.activeRooms = new Map(); // Legacy ref, kept for safety but unused with manager
+    this.hillManager = null;
+    this.activeRooms = new Map(); // Legacy ref
     this.wallBoxes = [];
     this.staticColliders = [];
     this.enemies = [];
-    this.entities = []; // Interactive entities (pickups)
+    /** @type {Array} */
+    this.entities = []; // Interactive entities (pickups, doors)
     this.fpsSamples = [];
     // Game State
     this.sanity = 100;
@@ -161,9 +163,8 @@ export default class BackroomsEngine {
     this.setupLights();
     this.setupEnemies();
     setupLevelAudio(level);
-    if (level !== 'backrooms') {
-      // Static colliders are handled by managers now
-    }
+    // Auto-save on level switch
+    this.saveState();
   }
   setupWorld() {
     this.worldGroup = new THREE.Group();
@@ -182,11 +183,7 @@ export default class BackroomsEngine {
         }
       );
     } else if (this.currentLevel === 'hill') {
-      // Clear manager if exists
-      if (this.backroomsManager) {
-        this.backroomsManager.dispose();
-        this.backroomsManager = null;
-      }
+      // Clear backrooms manager if exists
       if (this.backroomsManager) {
         this.backroomsManager.dispose();
         this.backroomsManager = null;
@@ -195,7 +192,10 @@ export default class BackroomsEngine {
         this.scene,
         this.wallBoxes,
         this.config,
-        (entity) => this.entities.push(entity)
+        (entity) => {
+          /** @type {Object} */
+          this.entities.push(entity);
+        }
       );
     }
   }
@@ -217,15 +217,26 @@ export default class BackroomsEngine {
       this.backroomsManager.dispose();
       this.backroomsManager = null;
     }
-    // Clear entities
+    if (this.hillManager) {
+      this.hillManager.dispose();
+      this.hillManager = null;
+    }
+    // Clear entities and filter out level-specific ones
     this.entities.forEach(e => {
       if (e.mesh) {
         this.scene.remove(e.mesh);
         if (e.mesh.geometry) e.mesh.geometry.dispose();
-        if (e.mesh.material) e.mesh.material.dispose();
+        if (e.mesh.material) {
+          if (Array.isArray(e.mesh.material)) e.mesh.material.forEach(m => m.dispose());
+          else e.mesh.material.dispose();
+        }
       }
     });
-    this.entities = [];
+    // Filter entities to remove level-specific ones but keep any global ones if they existed (currently none)
+    this.entities = this.entities.filter(e => 
+      !(e.type === 'door' && e.kind === 'toBackrooms') && 
+      !(e.type === 'pickup' && ['battery', 'medkit'].includes(e.kind))
+    );
     this.wallBoxes = [];
   }
   dispose() {
@@ -416,10 +427,37 @@ export default class BackroomsEngine {
       const hit = intersects[0];
       const object = hit.object;
       const dist = hit.distance;
-      // Check Entities (Pickups)
-
-
-      // Check Doors (Legacy)
+      // Check Entities (Pickups & Doors)
+      const entity = this.entities.find(e => e.mesh === object);
+      if (entity && dist < entity.radius) {
+        if (entity.type === 'door' && entity.kind === 'toBackrooms') {
+          this.setLevel('backrooms');
+          this.callbacks.onInteract('سوئیچ به Backrooms!');
+          return;
+        }
+        if (entity.type === 'pickup') {
+          if (entity.kind === 'battery') {
+            this.flashlight.distance = Math.min(50, (this.flashlight.distance || 30) + 5);
+            this.flashlight.intensity = Math.min(3, (this.flashlight.intensity || 2) + 0.5);
+          } else if (entity.kind === 'medkit') {
+            this.sanity = Math.min(100, this.sanity + 20);
+            this.stamina = Math.min(100, this.stamina + 20);
+            this.callbacks.onSanityUpdate(this.sanity);
+            this.callbacks.onStaminaUpdate(this.stamina);
+          }
+          this.scene.remove(entity.mesh);
+          if (entity.mesh.geometry) entity.mesh.geometry.dispose();
+          if (entity.mesh.material) {
+            if (Array.isArray(entity.mesh.material)) entity.mesh.material.forEach(m => m.dispose());
+            else entity.mesh.material.dispose();
+          }
+          const idx = this.entities.indexOf(entity);
+          if (idx > -1) this.entities.splice(idx, 1);
+          this.callbacks.onInteract(entity.prompt);
+          return;
+        }
+      }
+      // Check Doors (Legacy Fallback)
       if (object.name === 'door' && dist < 3) {
         this.callbacks.onInteract('Door');
         object.rotation.y += Math.PI / 2;
@@ -450,7 +488,11 @@ export default class BackroomsEngine {
       this.updateEnemies(dt);
       this.updateStats(dt);
     }
-    this.composer.render();
+    if (this.composer) {
+      this.composer.render();
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
     // FPS
     this.fpsSamples.push(1/dt);
     if (this.fpsSamples.length > 20) {
@@ -497,34 +539,3 @@ export default class BackroomsEngine {
     resumeAudio();
   }
 }
-    this.hillManager = null;
-    this.hillManager = null;
-    this.hillManager = null;
-    if (this.hillManager) {
-      this.hillManager.dispose();
-      this.hillManager = null;
-    }
-      if (entity) {
-        if (entity.type === 'door' && entity.kind === 'toBackrooms' && dist < entity.radius) {
-          this.setLevel('backrooms');
-          this.callbacks.onInteract('سوئیچ به Backrooms!');
-          return;
-        }
-        if (entity.type === 'pickup' && dist < entity.radius) {
-          if (entity.kind === 'battery') {
-            this.flashlight.distance = Math.min(50, (this.flashlight.distance || 30) + 5);
-            this.flashlight.intensity = Math.min(3, (this.flashlight.intensity || 2) + 0.5);
-          } else if (entity.kind === 'medkit') {
-            this.sanity = Math.min(100, this.sanity + 20);
-            this.stamina = Math.min(100, this.stamina + 20);
-            this.callbacks.onSanityUpdate(this.sanity);
-            this.callbacks.onStaminaUpdate(this.stamina);
-          }
-          this.scene.remove(entity.mesh);
-          if (entity.mesh.geometry) entity.mesh.geometry.dispose();
-          if (entity.mesh.material) entity.mesh.material.dispose();
-          this.entities.splice(this.entities.indexOf(entity), 1);
-          this.callbacks.onInteract(entity.prompt);
-          return;
-        }
-      }
