@@ -12,7 +12,15 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'dist',
+    outDir: 'public',
     emptyOutDir: true,
+  },
+  server: {
+    host: '10.0.0.1',
+    port: 8001,
+  },
+  preview: {
+    host: '10.0.0.1',
+    port: 8001,
   },
 });
