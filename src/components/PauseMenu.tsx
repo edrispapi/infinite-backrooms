@@ -3,8 +3,10 @@ import { motion } from 'framer-motion';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Slider } from '@/components/ui/slider';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Play, RotateCcw, Volume2, Monitor, ChevronRight, MousePointer2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { WorldType } from '../lib/game/BackroomsEngine';
 interface PauseMenuProps {
   onResume: () => void;
   onReset: () => void;
@@ -12,10 +14,12 @@ interface PauseMenuProps {
   isMuted: boolean;
   quality: 'high' | 'low';
   mouseSensitivity: number;
+  level: WorldType;
   onVolumeChange: (vol: number) => void;
   onMute: () => void;
   onQualityToggle: () => void;
   onSensitivityChange: (sens: number) => void;
+  onLevelChange: (level: WorldType) => void;
 }
 export function PauseMenu({
   onResume,
@@ -24,10 +28,12 @@ export function PauseMenu({
   isMuted,
   quality,
   mouseSensitivity,
+  level,
   onVolumeChange,
   onMute,
   onQualityToggle,
-  onSensitivityChange
+  onSensitivityChange,
+  onLevelChange
 }: PauseMenuProps) {
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md animate-in fade-in duration-300">
@@ -57,7 +63,7 @@ export function PauseMenu({
               Resume / از سرگیری
             </Button>
             {/* Settings Section */}
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.1 }}
@@ -90,13 +96,30 @@ export function PauseMenu({
                   className="w-32"
                 />
               </div>
+              {/* Level Selection */}
+              <div className="flex items-center justify-between text-sm font-mono">
+                <span className="opacity-70 flex items-center gap-2">
+                  <Monitor className="w-4 h-4" /> سطح / محیط
+                </span>
+                <div className="w-40">
+                  <Select value={level} onValueChange={(val) => onLevelChange(val as WorldType)}>
+                    <SelectTrigger className="h-8 text-xs bg-black/20 border-white/10">
+                      <SelectValue placeholder="Select Level" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-black/90 border-white/10 text-br-text">
+                      <SelectItem value="backrooms">Level 0 – Backrooms</SelectItem>
+                      <SelectItem value="hill">Level Field – Hill</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
               <Button
                 onClick={onMute}
                 variant="outline"
                 className="w-full h-10 border-white/10 hover:bg-white/10 font-mono text-xs uppercase tracking-wider"
               >
                 <Volume2 className={cn("mr-2 w-4 h-4", isMuted && "opacity-50")} />
-                {isMuted ? "Unmute / صدا را فعال کن" : "Mute / صدا را بی‌صدا کن"}
+                {isMuted ? "Unmute / صدا را ف��ال کن" : "Mute / صدا را بی‌صدا کن"}
               </Button>
               <div className="h-px bg-white/10 my-2" />
               <Button

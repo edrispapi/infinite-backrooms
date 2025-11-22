@@ -5,6 +5,10 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { RGBShiftShader } from 'three/examples/jsm/shaders/RGBShiftShader.js';
 // --- TYPES ---
+export enum WorldType {
+  BACKROOMS = 'backrooms',
+  HILL = 'hill'
+}
 type EngineParams = {
   onLockChange: (isLocked: boolean) => void;
   onSanityUpdate?: (sanity: number) => void;
@@ -16,6 +20,7 @@ type EngineParams = {
   onMute?: () => void;
   onDeath?: () => void;
   onSensitivityChange?: (sens: number) => void;
+  onLevelChange?: (level: WorldType) => void;
 };
 type GameConfig = {
   walkSpeed: number;
@@ -112,8 +117,14 @@ export class BackroomsEngine {
     right: false,
     run: false
   };
+  // World State
+  private currentLevel: WorldType = WorldType.BACKROOMS;
+  private worldGroup: THREE.Group | null = null;
   private activeRooms = new Map<string, { group: THREE.Group; colliders: THREE.Box3[] }>();
   private wallBoxes: THREE.Box3[] = [];
+  private staticColliders: THREE.Box3[] = [];
+  private hillLights: THREE.Light[] = [];
+  private backroomsLights: THREE.Light[] = [];
   // Materials (Cached for performance)
   private floorMat!: THREE.MeshStandardMaterial;
   private wallMat!: THREE.MeshStandardMaterial;
@@ -181,21 +192,186 @@ export class BackroomsEngine {
       this.resumeAudio();
     });
     this.controls.addEventListener('unlock', () => this.params.onLockChange(false));
-    // 6. Lights
-    this.setupLights();
-    // 7. Materials
+    // 6. Materials
     this.setupMaterials();
-    // 8. Input & Resize
+    // 7. Input & Resize
     this.setupInput();
     window.addEventListener('resize', this.onWindowResize);
-    // 9. Audio
+    // 8. Audio
     this.initAudio();
-    // 10. Enemies
-    this.setupEnemies();
-    // 11. Initial Generation
-    this.updateRooms();
-    // 12. Start Loop
+    // 9. Initial Level Setup (Defaults to Backrooms)
+    this.setLevel(this.currentLevel);
+    // 10. Start Loop
     this.start();
+  }
+  public setLevel(level: WorldType) {
+    this.currentLevel = level;
+    if (this.params.onLevelChange) this.params.onLevelChange(level);
+    // Reset Player
+    this.controls.getObject().position.set(0, this.config.playerHeight, 0);
+    this.controls.getObject().rotation.set(0, 0, 0);
+    // Dispose Old World
+    this.disposeWorld();
+    // Setup New World
+    this.setupWorld();
+    this.setupLights();
+    this.setupAudioForLevel();
+    this.setupEnemies();
+    // Initial Update
+    if (this.currentLevel === WorldType.BACKROOMS) {
+      this.updateRooms();
+    } else {
+      this.wallBoxes = [...this.staticColliders];
+    }
+  }
+  private setupWorld() {
+    if (this.worldGroup) this.scene.remove(this.worldGroup);
+    this.worldGroup = new THREE.Group();
+    this.scene.add(this.worldGroup);
+    this.staticColliders = [];
+    if (this.currentLevel === WorldType.BACKROOMS) {
+      // Backrooms uses procedural generation in updateRooms()
+      // We just clear active rooms here
+      this.activeRooms.clear();
+    } else {
+      // HILL Level Setup
+      // 1. Grass
+      const grassGeo = new THREE.PlaneGeometry(200, 200);
+      const grassMat = new THREE.MeshStandardMaterial({ color: 0x228B22, roughness: 0.8 });
+      const grass = new THREE.Mesh(grassGeo, grassMat);
+      grass.rotation.x = -Math.PI / 2;
+      grass.receiveShadow = true;
+      this.worldGroup.add(grass);
+      // 2. Dirt Path
+      const pathPoints = [
+        new THREE.Vector3(-50, 0, -50),
+        new THREE.Vector3(-30, 0, -30),
+        new THREE.Vector3(-10, 0, -10),
+        new THREE.Vector3(10, 0, 10),
+        new THREE.Vector3(30, 0, 30),
+        new THREE.Vector3(50, 0, 50)
+      ];
+      for (let i = 0; i < pathPoints.length - 1; i++) {
+        const start = pathPoints[i];
+        const end = pathPoints[i + 1];
+        const dir = new THREE.Vector3().subVectors(end, start).normalize();
+        const length = start.distanceTo(end);
+        const pathGeo = new THREE.BoxGeometry(3, 0.2, length);
+        const pathMat = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 1.0 });
+        const pathBox = new THREE.Mesh(pathGeo, pathMat);
+        const center = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
+        pathBox.position.copy(center);
+        pathBox.lookAt(center.clone().add(dir));
+        this.worldGroup.add(pathBox);
+        // Add to colliders (low obstacle/ground)
+        const box = new THREE.Box3().setFromObject(pathBox);
+        this.staticColliders.push(box);
+      }
+      // 3. House
+      const houseGroup = new THREE.Group();
+      houseGroup.position.set(0, 0, 0);
+      // Walls
+      const wallGeo = new THREE.BoxGeometry(8, 3, 8);
+      const wallMat = new THREE.MeshStandardMaterial({ color: 0xFFFFFF });
+      const houseBase = new THREE.Mesh(wallGeo, wallMat);
+      houseBase.position.set(0, 1.5, 0);
+      houseBase.castShadow = true;
+      houseBase.receiveShadow = true;
+      houseGroup.add(houseBase);
+      // Roof
+      const roofGeo = new THREE.ConeGeometry(6, 2, 4);
+      const roofMat = new THREE.MeshStandardMaterial({ color: 0xFF0000 });
+      const roof = new THREE.Mesh(roofGeo, roofMat);
+      roof.position.set(0, 4.0, 0);
+      roof.rotation.y = Math.PI / 4;
+      roof.castShadow = true;
+      houseGroup.add(roof);
+      this.worldGroup.add(houseGroup);
+      // House Collider
+      const houseBox = new THREE.Box3().setFromObject(houseBase);
+      this.staticColliders.push(houseBox);
+      // 4. Fences
+      const fenceGeo = new THREE.BoxGeometry(0.1, 2, 3);
+      const fenceMat = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
+      for (let i = 0; i < 10; i++) {
+        const angle = (i / 10) * Math.PI * 2;
+        const dist = 15 + Math.random() * 20;
+        const fx = Math.cos(angle) * dist;
+        const fz = Math.sin(angle) * dist;
+        const fence = new THREE.Mesh(fenceGeo, fenceMat);
+        fence.position.set(fx, 1, fz);
+        fence.rotation.y = Math.random() * Math.PI;
+        fence.castShadow = true;
+        this.worldGroup.add(fence);
+        const box = new THREE.Box3().setFromObject(fence);
+        this.staticColliders.push(box);
+      }
+    }
+  }
+  private disposeWorld() {
+    // Dispose procedural rooms
+    this.disposeRooms();
+    // Dispose static world
+    if (this.worldGroup) {
+      this.worldGroup.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          if (obj.geometry) obj.geometry.dispose();
+          if (Array.isArray(obj.material)) {
+            obj.material.forEach(m => m.dispose());
+          } else if (obj.material) {
+            obj.material.dispose();
+          }
+        }
+      });
+      this.scene.remove(this.worldGroup);
+      this.worldGroup = null;
+    }
+    this.staticColliders = [];
+    this.wallBoxes = [];
+  }
+  private setupLights() {
+    // Clear existing lights
+    this.backroomsLights.forEach(l => this.scene.remove(l));
+    this.hillLights.forEach(l => this.scene.remove(l));
+    this.backroomsLights = [];
+    this.hillLights = [];
+    if (this.currentLevel === WorldType.BACKROOMS) {
+      const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.5);
+      hemi.position.set(0, 20, 0);
+      this.scene.add(hemi);
+      this.backroomsLights.push(hemi);
+      const amb = new THREE.AmbientLight(0xffffdd, 0.6);
+      this.scene.add(amb);
+      this.backroomsLights.push(amb);
+      const dir = new THREE.DirectionalLight(0xfff9e5, 0.4);
+      dir.position.set(10, 20, 5);
+      this.scene.add(dir);
+      this.backroomsLights.push(dir);
+      this.scene.fog = new THREE.FogExp2(0xd6c97b, 0.035);
+      this.scene.background = new THREE.Color(0xd6c97b);
+    } else {
+      const hemi = new THREE.HemisphereLight(0x87CEEB, 0x444444, 0.6);
+      hemi.position.set(0, 20, 0);
+      this.scene.add(hemi);
+      this.hillLights.push(hemi);
+      const sun = new THREE.DirectionalLight(0xFFD700, 0.8);
+      sun.position.set(50, 50, 50);
+      sun.castShadow = true;
+      this.scene.add(sun);
+      this.hillLights.push(sun);
+      this.scene.fog = new THREE.FogExp2(0x87CEEB, 0.008);
+      this.scene.background = new THREE.Color(0x87CEEB);
+    }
+  }
+  private setupAudioForLevel() {
+    if (this.humOscillator && this.audioContext) {
+      const freq = this.currentLevel === WorldType.BACKROOMS ? 60 : 45;
+      this.humOscillator.frequency.setValueAtTime(freq, this.audioContext.currentTime);
+      const gain = this.currentLevel === WorldType.BACKROOMS ? 0.08 : 0.05;
+      if (this.humGain) {
+        this.humGain.gain.setValueAtTime(gain, this.audioContext.currentTime);
+      }
+    }
   }
   private setupPostProcessing() {
     this.composer = new EffectComposer(this.renderer);
@@ -209,16 +385,6 @@ export class BackroomsEngine {
     noisePass.uniforms.amount.value = 0.03;
     this.composer.addPass(noisePass);
     this.vhsPasses.push(noisePass);
-  }
-  private setupLights() {
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.5);
-    hemi.position.set(0, 20, 0);
-    this.scene.add(hemi);
-    const amb = new THREE.AmbientLight(0xffffdd, 0.6);
-    this.scene.add(amb);
-    const dir = new THREE.DirectionalLight(0xfff9e5, 0.4);
-    dir.position.set(10, 20, 5);
-    this.scene.add(dir);
   }
   private setupMaterials() {
     this.floorMat = new THREE.MeshStandardMaterial({
@@ -252,9 +418,21 @@ export class BackroomsEngine {
       mesh.add(light);
       return mesh;
     };
+    // Define positions based on level
+    let stalkerPos, sprinterPos, lurkerPos;
+    if (this.currentLevel === WorldType.BACKROOMS) {
+      stalkerPos = new THREE.Vector3(8, 1.75, -10);
+      sprinterPos = new THREE.Vector3(-12, 1.75, 6);
+      lurkerPos = new THREE.Vector3(16, 1.75, 16);
+    } else {
+      // Hill positions (around house)
+      stalkerPos = new THREE.Vector3(20, 1.75, 10);
+      sprinterPos = new THREE.Vector3(-15, 1.75, -5);
+      lurkerPos = new THREE.Vector3(0, 1.75, 25);
+    }
     // 1. Stalker
     const stalker = createEnemyMesh(0xff0000);
-    stalker.position.set(8, 1.75, -10);
+    stalker.position.copy(stalkerPos);
     this.scene.add(stalker);
     this.enemies.push({
       mesh: stalker,
@@ -270,7 +448,7 @@ export class BackroomsEngine {
     });
     // 2. Sprinter
     const sprinter = createEnemyMesh(0xff3300);
-    sprinter.position.set(-12, 1.75, 6);
+    sprinter.position.copy(sprinterPos);
     this.scene.add(sprinter);
     this.enemies.push({
       mesh: sprinter,
@@ -286,7 +464,7 @@ export class BackroomsEngine {
     });
     // 3. Lurker
     const lurker = createEnemyMesh(0x880000);
-    lurker.position.set(16, 1.75, 16);
+    lurker.position.copy(lurkerPos);
     this.scene.add(lurker);
     this.enemies.push({
       mesh: lurker,
@@ -318,9 +496,7 @@ export class BackroomsEngine {
       // 1. Hum (Background)
       this.humOscillator = this.audioContext.createOscillator();
       this.humOscillator.type = 'sine';
-      this.humOscillator.frequency.setValueAtTime(60, this.audioContext.currentTime);
       this.humGain = this.audioContext.createGain();
-      this.humGain.gain.setValueAtTime(0.08, this.audioContext.currentTime);
       this.humOscillator.connect(this.humGain);
       this.humGain.connect(this.masterGain);
       this.humOscillator.start();
@@ -367,6 +543,8 @@ export class BackroomsEngine {
       if (this.audioContext.state === 'running') {
         this.audioContext.suspend();
       }
+      // Setup initial audio params
+      this.setupAudioForLevel();
     } catch (e) {
       console.warn('Audio initialization failed:', e);
     }
@@ -385,7 +563,6 @@ export class BackroomsEngine {
     }
   }
   public setSensitivity(sens: number) {
-    // PointerLockControls uses pointerSpeed
     if (this.controls) {
       this.controls.pointerSpeed = sens;
     }
@@ -410,8 +587,10 @@ export class BackroomsEngine {
     this.config.roomRadius = this.quality === 'high' ? 2 : 1;
     this.config.cellSize = this.quality === 'high' ? 14 : 16.8;
     this.renderer.setPixelRatio(this.quality === 'high' ? 1.5 : 1.0);
-    this.disposeRooms();
-    this.updateRooms();
+    if (this.currentLevel === WorldType.BACKROOMS) {
+      this.disposeRooms();
+      this.updateRooms();
+    }
     if (this.params.onQualityChange) {
       this.params.onQualityChange(this.quality);
     }
@@ -421,13 +600,8 @@ export class BackroomsEngine {
     this.sanity.current = 100;
     this.stamina.current = 100;
     this.nearestDist = Infinity;
-    // Reset Player Position
-    this.controls.getObject().position.set(0, this.config.playerHeight, 0);
-    this.controls.getObject().rotation.set(0, 0, 0);
-    // Reset World
-    this.disposeRooms();
-    this.setupEnemies();
-    this.updateRooms();
+    // Reset Level (rebuilds everything)
+    this.setLevel(this.currentLevel);
     // Reset Audio
     this.resumeAudio();
     if (this.deathGain && this.audioContext) {
@@ -459,10 +633,6 @@ export class BackroomsEngine {
   };
   private disposeRooms() {
     this.activeRooms.forEach(({ group, colliders }) => {
-      for (const box of colliders) {
-        const idx = this.wallBoxes.indexOf(box);
-        if (idx > -1) this.wallBoxes.splice(idx, 1);
-      }
       group.traverse((obj) => {
         if (obj instanceof THREE.Mesh) {
           if (obj.geometry) obj.geometry.dispose();
@@ -471,7 +641,10 @@ export class BackroomsEngine {
       this.scene.remove(group);
     });
     this.activeRooms.clear();
-    this.wallBoxes = [];
+    // Only clear wallBoxes if we are in backrooms mode, otherwise we might clear static colliders
+    if (this.currentLevel === WorldType.BACKROOMS) {
+      this.wallBoxes = [];
+    }
   }
   private onWindowResize = () => {
     if (!this.camera || !this.renderer || !this.composer) return;
@@ -506,7 +679,7 @@ export class BackroomsEngine {
       e.mesh.geometry.dispose();
       (e.mesh.material as THREE.Material).dispose();
     });
-    this.disposeRooms();
+    this.disposeWorld();
     if (this.floorMat) this.floorMat.dispose();
     if (this.wallMat) this.wallMat.dispose();
     // Clean up audio
@@ -545,7 +718,9 @@ export class BackroomsEngine {
     });
     if (this.controls.isLocked && !this.isDead) {
       this.updatePlayer(dt);
-      this.updateRooms();
+      if (this.currentLevel === WorldType.BACKROOMS) {
+        this.updateRooms();
+      }
       this.updateEnemies(dt);
       this.updateStats(dt);
       this.updateAudio(dt);
@@ -868,15 +1043,56 @@ export class BackroomsEngine {
          wall.receiveShadow = true;
          group.add(pillar);
     }
+    // Floor Holes (Visual + Collision)
+    const holeCount = 3 + Math.floor(rng() * 2);
+    for (let h = 0; h < holeCount; h++) {
+      const hx = (rng() - 0.5) * cs * 0.6;
+      const hz = (rng() - 0.5) * cs * 0.6;
+      const holeGeo = new THREE.BoxGeometry(1.5, 2.5, 1.5);
+      const holeMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+      const hole = new THREE.Mesh(holeGeo, holeMat);
+      hole.position.set(hx, -1.25, hz);
+      group.add(hole);
+      // Add invisible walls around the hole to prevent walking into it
+      // We create 4 thin walls around the hole
+      const holeSize = 1.5;
+      const halfSize = holeSize / 2;
+      const invisibleWallGeo = new THREE.BoxGeometry(holeSize, wallHeight, 0.1);
+      const invisibleWallMat = new THREE.MeshBasicMaterial({ visible: false });
+      // North
+      const w1 = new THREE.Mesh(invisibleWallGeo, invisibleWallMat);
+      w1.position.set(hx, wallHeight/2, hz - halfSize);
+      group.add(w1);
+      // South
+      const w2 = new THREE.Mesh(invisibleWallGeo, invisibleWallMat);
+      w2.position.set(hx, wallHeight/2, hz + halfSize);
+      group.add(w2);
+      // East
+      const w3 = new THREE.Mesh(new THREE.BoxGeometry(0.1, wallHeight, holeSize), invisibleWallMat);
+      w3.position.set(hx + halfSize, wallHeight/2, hz);
+      group.add(w3);
+      // West
+      const w4 = new THREE.Mesh(new THREE.BoxGeometry(0.1, wallHeight, holeSize), invisibleWallMat);
+      w4.position.set(hx - halfSize, wallHeight/2, hz);
+      group.add(w4);
+    }
     // Compute Colliders
     group.updateMatrixWorld(true);
     group.traverse((obj) => {
       if (obj instanceof THREE.Mesh && obj !== floor && obj !== ceil) {
-        const box = new THREE.Box3().setFromObject(obj);
-        this.wallBoxes.push(box);
-        roomColliders.push(box);
+        // Don't add the visual hole box itself as a collider (it's below floor),
+        // but DO add the invisible walls we created around it.
+        // The invisible walls are meshes, so they will be picked up here.
+        // We filter out the black hole box by checking its position Y or material if needed,
+        // but since it's below 0, collision check at player height (1.75) won't hit it anyway.
+        // However, to be safe and clean:
+        if (obj.position.y > -1) {
+            const box = new THREE.Box3().setFromObject(obj);
+            this.wallBoxes.push(box);
+            roomColliders.push(box);
+        }
       }
     });
-    activeRooms.set(key, { group, colliders: roomColliders });
+    this.activeRooms.set(key, { group, colliders: roomColliders });
   }
 }

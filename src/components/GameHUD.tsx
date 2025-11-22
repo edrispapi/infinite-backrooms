@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Battery, Disc3, Brain, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Slider } from '@/components/ui/slider';
+import { WorldType } from '@/lib/game/BackroomsEngine';
 interface GameHUDProps {
   isLocked: boolean;
   sanity: number;
@@ -9,8 +10,9 @@ interface GameHUDProps {
   quality: 'high' | 'low';
   fps?: number;
   proximity: number;
+  level: WorldType;
 }
-export function GameHUD({ isLocked, sanity, stamina, quality, fps, proximity }: GameHUDProps) {
+export function GameHUD({ isLocked, sanity, stamina, quality, fps, proximity, level }: GameHUDProps) {
   // Simulating a diegetic camcorder interface
   const [timeString, setTimeString] = useState("00:00:00 PM");
   const [localFPS, setLocalFPS] = useState(60);
@@ -28,7 +30,7 @@ export function GameHUD({ isLocked, sanity, stamina, quality, fps, proximity }: 
   return (
     <>
       {/* Danger Overlay */}
-      <div 
+      <div
         className={cn(
           "absolute inset-0 transition-opacity duration-200 pointer-events-none z-30 mix-blend-multiply",
           proximity > 0 ? "opacity-100" : "opacity-0"
@@ -48,6 +50,11 @@ export function GameHUD({ isLocked, sanity, stamina, quality, fps, proximity }: 
             <div className="flex items-center gap-3">
               <div className="w-4 h-4 rounded-full bg-red-600 animate-blink shadow-[0_0_10px_rgba(220,38,38,0.8)]" />
               <span className="text-xl sm:text-2xl tracking-widest font-bold drop-shadow-md">REC</span>
+              {/* Level Indicator */}
+              <div className="flex items-center gap-2 text-sm font-bold tracking-widest opacity-80 ml-4 border-l border-white/20 pl-4">
+                 <span className={level === WorldType.HILL ? 'text-blue-400' : 'text-yellow-400'}>LEVEL:</span>
+                 <span>{level.toUpperCase()}</span>
+              </div>
             </div>
             <div className="text-sm opacity-70 tracking-wider">TAPE_004 // [LIVE_FEED]</div>
           </div>
@@ -90,8 +97,8 @@ export function GameHUD({ isLocked, sanity, stamina, quality, fps, proximity }: 
                   className={cn(
                     "w-full [&_[role=slider]]:border-transparent",
                     "[&_[role=slider]]:bg-white",
-                    stamina > 50 ? "[&>.relative>.absolute]:bg-green-500" : 
-                    stamina > 20 ? "[&>.relative>.absolute]:bg-yellow-500" : 
+                    stamina > 50 ? "[&>.relative>.absolute]:bg-green-500" :
+                    stamina > 20 ? "[&>.relative>.absolute]:bg-yellow-500" :
                     "[&>.relative>.absolute]:bg-red-600"
                   )}
                   disabled

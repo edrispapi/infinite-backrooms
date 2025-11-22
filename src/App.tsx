@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { BackroomsEngine } from './lib/game/BackroomsEngine';
+import { BackroomsEngine, WorldType } from './lib/game/BackroomsEngine';
 import { GameHUD } from './components/GameHUD';
 import { PauseMenu } from './components/PauseMenu';
 import { BootSequence } from './components/BootSequence';
@@ -20,6 +20,7 @@ export default function App() {
   const [quality, setQuality] = useState<'high' | 'low'>('high');
   const [fps, setFps] = useState(60);
   const [proximity, setProximity] = useState(0);
+  const [level, setLevel] = useState<WorldType>(WorldType.BACKROOMS);
   // Settings
   const [volume, setVolume] = useState(80);
   const [isMuted, setIsMuted] = useState(false);
@@ -29,18 +30,22 @@ export default function App() {
     const savedQuality = localStorage.getItem('quality') as 'high' | 'low' || 'high';
     const savedSens = Number(localStorage.getItem('sensitivity')) || 1.0;
     const savedVol = Number(localStorage.getItem('masterVolume')) || 0.8;
+    const savedLevel = localStorage.getItem('level') as WorldType || WorldType.BACKROOMS;
     setQuality(savedQuality);
     setMouseSensitivity(savedSens);
     setVolume(savedVol * 100);
+    setLevel(savedLevel);
     if (engineRef.current) {
       engineRef.current.setSensitivity(savedSens);
       engineRef.current.setVolume(savedVol);
+      engineRef.current.setLevel(savedLevel);
     }
   }, []);
   // Persist Settings
   useEffect(() => { localStorage.setItem('quality', quality); }, [quality]);
   useEffect(() => { localStorage.setItem('sensitivity', mouseSensitivity.toString()); }, [mouseSensitivity]);
   useEffect(() => { localStorage.setItem('masterVolume', (volume / 100).toString()); }, [volume]);
+  useEffect(() => { localStorage.setItem('level', level); }, [level]);
   useEffect(() => {
     if (!containerRef.current) return;
     // Initialize Engine
@@ -57,15 +62,18 @@ export default function App() {
       onSensitivityChange: (sens) => {
         setMouseSensitivity(sens);
         localStorage.setItem('sensitivity', sens.toString());
-      }
+      },
+      onLevelChange: (l) => setLevel(l)
     });
     engine.init();
     engineRef.current = engine;
     // Apply initial settings
     const savedSens = Number(localStorage.getItem('sensitivity')) || 1.0;
     const savedVol = Number(localStorage.getItem('masterVolume')) || 0.8;
+    const savedLevel = localStorage.getItem('level') as WorldType || WorldType.BACKROOMS;
     engine.setSensitivity(savedSens);
     engine.setVolume(savedVol);
+    engine.setLevel(savedLevel);
     // Cleanup
     return () => {
       engine.dispose();
@@ -114,11 +122,12 @@ export default function App() {
           quality={quality}
           fps={fps}
           proximity={proximity}
+          level={level}
         />
       </div>
       {/* Overlays Logic */}
       {isDead ? (
-        <DeathScreen 
+        <DeathScreen
           onRetry={() => {
             engineRef.current?.reset();
             setIsDead(false);
@@ -133,7 +142,10 @@ export default function App() {
           }}
         />
       ) : !isInitialized ? (
-        <BootSequence onComplete={() => setIsInitialized(true)} />
+        <BootSequence onComplete={() => {
+          setIsInitialized(true);
+          engineRef.current?.setLevel(level);
+        }} />
       ) : !isLocked && !hasStarted ? (
         <StartOverlay onStart={handleStart} />
       ) : !isLocked ? (
@@ -144,6 +156,7 @@ export default function App() {
           isMuted={isMuted}
           quality={quality}
           mouseSensitivity={mouseSensitivity}
+          level={level}
           onVolumeChange={(val) => {
             setVolume(val);
             engineRef.current?.setVolume(val / 100);
@@ -156,6 +169,11 @@ export default function App() {
           onSensitivityChange={(sens) => {
             setMouseSensitivity(sens);
             engineRef.current?.setSensitivity(sens);
+          }}
+          onLevelChange={(l) => {
+            setLevel(l);
+            engineRef.current?.setLevel(l);
+            localStorage.setItem('level', l);
           }}
         />
       ) : null}

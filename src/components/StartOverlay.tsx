@@ -14,14 +14,17 @@ export function StartOverlay({ onStart }: StartOverlayProps) {
         <p className="text-lg leading-relaxed opacity-90">
           برای شروع روی دکمه زیر کلیک کن، ماوس قفل می‌شه و می‌تونی با
           <strong className="mx-1 text-yellow-200 font-mono">W A S D</strong>
-          حرکت کنی و با ماوس نگاه کنی.
+          حرکت کنی و با ماوس ن��اه کنی.
         </p>
         <p className="text-base opacity-80">
-          برای دویدن کلی�� <strong className="mx-1 text-yellow-200 font-mono">Shift</strong> رو نگه دا��.
+          برای دویدن کلید <strong className="mx-1 text-yellow-200 font-mono">Shift</strong> رو نگه دار.
         </p>
         <p className="text-base opacity-80">
           برای تغییر کیفیت <strong className="mx-1 text-yellow-200 font-mono">Q</strong> بزن.
           برای توقف <strong className="mx-1 text-yellow-200 font-mono">ESC</strong> فشار بده.
+        </p>
+        <p className="text-base opacity-80 border-t border-white/10 pt-4 mt-4">
+          می‌تونی سطح رو از منو تغییر بدی: <strong className="mx-1 text-yellow-200 font-mono">Backrooms (دفتر زرد)</strong> یا <strong className="mx-1 text-yellow-200 font-mono">Hill (خانه روی تپه)</strong>.
         </p>
       </div>
       <Button
