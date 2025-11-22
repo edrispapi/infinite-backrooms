@@ -3,11 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
     <title>Liminal-Zero: Infinite Backrooms</title>
+    <link rel="stylesheet" href="/src/styles.css">
   </head>
-  <body class="bg-black overflow-hidden">
-    <div id="root" class="w-full h-full"></div>
-    <script type="module" src="/src/main.tsx"></script>
+  <body class="bg-black overflow-hidden select-none">
+    <div id="game-container" class="w-full h-full absolute inset-0 z-0"></div>
+    <script type="module" src="/src/main.js"></script>
   </body>
 </html>

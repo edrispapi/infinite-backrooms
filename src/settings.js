@@ -48,12 +48,3 @@ export function saveGame(state) {
     console.warn('Failed to save game', e);
   }
 }
-
-export function clearSave() {
-  try {
-    localStorage.removeItem(STORAGE_KEY_SAVE);
-    console.log('Save cleared');
-  } catch (e) {
-    console.warn('Failed to clear save', e);
-  }
-}

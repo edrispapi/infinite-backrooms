@@ -100,21 +100,6 @@ export function updateEnemyNoise(dist) {
   if (!enemyBus) return;
   const gain = dist < 20 ? 0.35 * (1 - dist / 20) : 0;
   enemyBus.gain.setTargetAtTime(gain, ctx.currentTime, 0.5);
-  // Lowpass Filter for distance
-  if (!enemyBus.lowpass) {
-    try {
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      enemyBus.disconnect();
-      enemyBus.connect(lp);
-      lp.connect(masterGain);
-      enemyBus.lowpass = lp;
-    } catch(e) { console.warn(e); }
-  }
-  if (enemyBus.lowpass) {
-    const freq = 1000 * (1 - dist/20);
-    enemyBus.lowpass.frequency.setTargetAtTime(Math.max(100, freq), ctx.currentTime, 0.2);
-  }
 }
 export function playDeath() {
   if (!deathOsc || !deathGain) return;
@@ -123,24 +108,4 @@ export function playDeath() {
   deathGain.gain.cancelScheduledValues(ctx.currentTime);
   deathGain.gain.setValueAtTime(0.3, ctx.currentTime);
   deathGain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 3);
-}
-export function disposeAudio() {
-  if (ctx) {
-    nodes.forEach(n => {
-      try { n.disconnect(); } catch(e){}
-      try { if(n.stop) n.stop(); } catch(e){}
-    });
-    if (ctx.state !== 'closed') ctx.close();
-    ctx = null;
-    masterGain = null;
-    humOsc = null;
-    humGain = null;
-    footstepOsc = null;
-    footstepGain = null;
-    breathOsc = null;
-    breathGain = null;
-    enemyBus = null;
-    deathOsc = null;
-    deathGain = null;
-  }
 }

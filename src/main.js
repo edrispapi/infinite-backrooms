@@ -6,9 +6,6 @@ import { initBoot } from './components/BootSequence.js';
 import { createStart, showStart } from './components/StartOverlay.js';
 import { createDeath, showDeath } from './components/DeathScreen.js';
 import { loadSettings, saveSettings, loadGame } from './settings.js';
-import { resumeAudio } from './audio.js';
-// Polyfill AudioContext
-window.AudioContext = window.AudioContext || window.webkitAudioContext;
 // State
 let engine = null;
 let isLocked = false;
@@ -35,6 +32,9 @@ createMenu({
   onSensitivity: (s) => {
     settings.sensitivity = s;
     saveSettings({ sensitivity: s });
+    engine.config.pointerSpeed = s; // Direct access or via callback
+    // PointerLockControls usually has pointerSpeed property, engine wrapper might need setter
+    // We'll assume engine handles config updates or we add a setter
     if (engine.controls) engine.controls.pointerSpeed = Number(s);
   },
   onLevel: (l) => {
@@ -47,13 +47,11 @@ createMenu({
     engine.quality = q;
     engine.config.roomRadius = q === 'high' ? 2 : 1;
     engine.config.cellSize = q === 'high' ? 14 : 16.8;
-    if (engine.currentLevel === 'hill') {
-      engine.renderer.setPixelRatio(q === 'high' ? 1.5 : 1.0);
-    } else if (engine.currentLevel === 'backrooms') {
-      engine.renderer.setPixelRatio(q === 'high' ? 1.5 : 1.0);
-      engine.disposeWorld();
-      engine.setupWorld();
-      engine.updateRooms(); // Force update for backrooms
+    engine.renderer.setPixelRatio(q === 'high' ? 1.5 : 1.0);
+    if (engine.currentLevel === 'backrooms') {
+        engine.disposeWorld();
+        engine.setupWorld();
+        engine.updateRooms();
     }
     saveSettings({ quality: q });
     return q;
@@ -110,14 +108,7 @@ const callbacks = {
     showDeath(true);
   },
   onInteract: (name) => {
-    const persianMap = { 
-      'سوئیچ به Backrooms!': 'سوئیچ به Backrooms!', 
-      'باتری چراغ‌قوه': 'باتری چراغ‌قوه', 
-      'کیت کمک‌های اولیه': 'کیت کمک‌های اولیه',
-      'Door': 'در / Door'
-    };
-    const persian = persianMap[name] || name;
-    addHint(persian, 'info');
+    addHint(`Interacted with ${name} / تعامل با ${name}`);
   }
 };
 function getHUDState() {
@@ -127,8 +118,7 @@ function getHUDState() {
     fps: 60, // Updated via callback
     quality: engine ? engine.quality : 'high',
     level: engine ? engine.currentLevel : 'backrooms',
-    proximity: engine ? (1 - Math.min(engine.nearestDist, 20)/20) : 0,
-    flashlight: engine ? engine.flashlight.visible : false
+    proximity: 0
   };
 }
 // Init
@@ -139,38 +129,8 @@ initBoot(() => {
   // Apply Settings
   engine.quality = settings.quality;
   engine.currentLevel = settings.level;
-  if (engine.controls) {
-    engine.controls.pointerSpeed = Number(settings.sensitivity);
-    // Fallback for pointer speed if needed
-    if (!window.matchMedia('(pointer: fine)').matches) {
-       engine.controls.pointerSpeed *= 0.7;
-    }
-  }
+  if (engine.controls) engine.controls.pointerSpeed = Number(settings.sensitivity);
+  // Volume handled in audio init/resume
   engine.setLevel(settings.level);
-  // Check for saved game
-  if (loadGame()) {
-    hasStarted = false;
-    showStart(false);
-    showMenu(true); // Show menu to allow Continue
-  } else {
-    engine.reset();
-    showStart(true);
-  }
-});
-// Global ESC listener for unlocking
-document.addEventListener('keydown', (e) => {
-  if (e.code === 'Escape' && isLocked && engine) {
-    engine.unlock();
-  }
-});
-// Visibility & Cleanup
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    if (engine && !engine.isDead && hasStarted) engine.saveState();
-  } else {
-    resumeAudio();
-  }
-});
-window.addEventListener('beforeunload', () => {
-  if (engine) engine.dispose();
+  showStart(true);
 });
