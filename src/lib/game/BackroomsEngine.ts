@@ -329,6 +329,21 @@ export class BackroomsEngine {
     const wallThickness = 0.4;
     const wallGeoX = new THREE.BoxGeometry(cs, wallHeight, wallThickness);
     const wallGeoZ = new THREE.BoxGeometry(wallThickness, wallHeight, cs);
+    const wallPositions = [
+      { x: 0, y: wallHeight / 2, z: -cs / 2 }, // front
+      { x: 0, y: wallHeight / 2, z: cs / 2 },  // back
+      { x: -cs / 2, y: wallHeight / 2, z: 0 }, // left
+      { x: cs / 2, y: wallHeight / 2, z: 0 }   // right
+    ];
+    for (let i = 0; i < wallPositions.length; i++) {
+      const pos = wallPositions[i];
+      const geo = (i < 2) ? wallGeoX : wallGeoZ;
+      const wall = new THREE.Mesh(geo, this.wallMat);
+      wall.position.set(pos.x, pos.y, pos.z);
+      wall.castShadow = true;
+      wall.receiveShadow = true;
+      group.add(wall);
+    }
     // Procedural Inner Walls
     const rng = mulberry32(ix * 928371 + iz * 1237);
     // Sometimes rooms are just open halls (low chance)
@@ -345,6 +360,8 @@ export class BackroomsEngine {
       const x = (rng() - 0.5) * (cs - margin);
       const z = (rng() - 0.5) * (cs - margin);
       wall.position.set(x, wallHeight/2, z);
+      wall.castShadow = true;
+      wall.receiveShadow = true;
       group.add(wall);
     }
     // Pillars
@@ -355,6 +372,8 @@ export class BackroomsEngine {
          const x = (rng() - 0.5) * (cs * 0.8);
          const z = (rng() - 0.5) * (cs * 0.8);
          pillar.position.set(x, wallHeight/2, z);
+         wall.castShadow = true;
+         wall.receiveShadow = true;
          group.add(pillar);
     }
     // Compute Colliders
