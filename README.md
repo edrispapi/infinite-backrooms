@@ -4,7 +4,7 @@ Liminal-Zero is a high-fidelity, browser-based psychological horror exploration 
 
 This project is built as a Cloudflare Workers application, serving a single-page app with optional API routes for extensibility.
 
-[cloudflarebutton]
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/edrispapi/infinite-backrooms)
 
 ## Features
 
@@ -106,7 +106,7 @@ Deploy to Cloudflare Workers for global edge distribution. No build step neededâ
 
 For custom domains or environment variables, edit `wrangler.jsonc` and run `wrangler deploy --env production`.
 
-[cloudflarebutton]
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/edrispapi/infinite-backrooms)
 
 ## Contributing
 
