@@ -1,5 +1,5 @@
 {
-  "name": "liminal-zero-4un6j39zrtd6j6yyfu7yi",
+  "name": "minimal-js",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -7,17 +7,29 @@
     "dev": "bun scripts/dev.ts",
     "build": "wrangler build",
     "deploy": "wrangler deploy",
-    "lint": "eslint --cache -f json --quiet .",
-    "prepare": "bun .bootstrap.js || true"
+    "lint": "eslint --cache -f json --quiet ."
   },
   "dependencies": {
-    "hono": "^4"
+    "@radix-ui/react-dialog": "^1.1.1",
+    "@radix-ui/react-slider": "^1.2.0",
+    "@radix-ui/react-slot": "^1.1.0",
+    "clsx": "^2.1.1",
+    "framer-motion": "^10.18.0",
+    "hono": "^4",
+    "lucide-react": "^0.263.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwind-merge": "^2.5.2",
+    "three": "^0.165.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4",
     "@eslint/js": "^9",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
     "eslint": "^9",
     "globals": "^16",
+    "tailwindcss": "^3.4.0",
     "typescript": "^5",
     "typescript-eslint": "^8",
     "wrangler": "^4"
