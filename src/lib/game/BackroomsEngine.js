@@ -5,7 +5,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { RGBShiftShader } from 'three/examples/jsm/shaders/RGBShiftShader.js';
-import { initAudio, resumeAudio, setVolume, toggleMute, setupLevelAudio, playFootstep, playBreath, updateEnemyNoise, playDeath } from '../../audio.js';
+import { initAudio, resumeAudio, setVolume, toggleMute, setupLevelAudio, playFootstep, playBreath, updateEnemyNoise, playDeath, disposeAudio } from '../../audio.js';
 import { createRoom } from '../../worlds/backrooms.js';
 import { setupHill } from '../../worlds/hill.js';
 import { saveGame } from '../../settings.js';
@@ -66,6 +66,7 @@ export default class BackroomsEngine {
     this.isDead = false;
     this.currentLevel = 'backrooms';
     this.quality = 'high';
+    this.disposed = false;
     // Audio State
     this.lastFootstep = 0;
     this.stepInterval = 0.48;
@@ -96,7 +97,6 @@ export default class BackroomsEngine {
     });
     this.controls.addEventListener('unlock', () => {
       this.callbacks.onLockChange(false);
-      // Auto-save on pause
       if (!this.isDead) this.saveState();
     });
     // Post Processing
@@ -131,6 +131,16 @@ export default class BackroomsEngine {
     initAudio();
     // Start Loop
     this.animate();
+  }
+  lock() {
+    if (this.controls && !this.controls.isLocked) {
+      this.controls.lock();
+    }
+  }
+  unlock() {
+    if (this.controls && this.controls.isLocked) {
+      this.controls.unlock();
+    }
   }
   setLevel(level) {
     if (this.currentLevel === level && this.worldGroup) return;
@@ -177,8 +187,17 @@ export default class BackroomsEngine {
     this.activeRooms.clear();
     this.wallBoxes = [];
   }
+  dispose() {
+    this.disposed = true;
+    this.disposeWorld();
+    disposeAudio();
+    if (this.renderer) {
+      this.renderer.dispose();
+      this.container.removeChild(this.renderer.domElement);
+    }
+    this.callbacks.onFPSUpdate(0);
+  }
   setupLights() {
-    // Clear old lights
     this.scene.children.filter(c => c.isLight && c !== this.flashlight).forEach(l => this.scene.remove(l));
     if (this.currentLevel === 'backrooms') {
       const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.5);
@@ -382,7 +401,6 @@ export default class BackroomsEngine {
       if (hit.name) {
         this.callbacks.onInteract(hit.name);
         if (hit.name === 'door') {
-            // Mock door open
             hit.rotation.y += Math.PI / 2;
         }
       }
@@ -397,6 +415,7 @@ export default class BackroomsEngine {
     this.composer.setSize(w, h);
   }
   animate() {
+    if (this.disposed) return;
     requestAnimationFrame(this.animate.bind(this));
     const dt = Math.min(this.clock.getDelta(), 0.1);
     if (this.noisePass) this.noisePass.uniforms.time.value += dt;
@@ -409,10 +428,17 @@ export default class BackroomsEngine {
     this.composer.render();
     // FPS
     this.fpsSamples.push(1/dt);
-    if (this.fpsSamples.length > 20) this.fpsSamples.shift();
-    if (Math.random() < 0.1) {
-        const avg = this.fpsSamples.reduce((a,b)=>a+b,0) / this.fpsSamples.length;
-        this.callbacks.onFPSUpdate(Math.floor(avg));
+    if (this.fpsSamples.length > 20) {
+        const updateFPS = () => {
+            const avg = this.fpsSamples.reduce((a,b)=>a+b,0) / this.fpsSamples.length;
+            this.callbacks.onFPSUpdate(Math.floor(avg));
+            this.fpsSamples.shift();
+        };
+        if (window.requestIdleCallback) {
+            requestIdleCallback(updateFPS);
+        } else {
+            updateFPS();
+        }
     }
   }
   saveState() {

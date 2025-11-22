@@ -4,13 +4,10 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowJs": true,
-    "checkJs": false,
+    "checkJs": true,
     "noEmit": true,
     "strict": false,
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"]
-    }
+    "baseUrl": "."
   },
-  "include": ["src/**/*.js", "vite.config.ts"]
+  "include": ["src/**/*.js", "vite.config.ts", "worker/**/*.ts"]
 }

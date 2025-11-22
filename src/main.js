@@ -6,6 +6,9 @@ import { initBoot } from './components/BootSequence.js';
 import { createStart, showStart } from './components/StartOverlay.js';
 import { createDeath, showDeath } from './components/DeathScreen.js';
 import { loadSettings, saveSettings, loadGame } from './settings.js';
+import { resumeAudio } from './audio.js';
+// Polyfill AudioContext
+window.AudioContext = window.AudioContext || window.webkitAudioContext;
 // State
 let engine = null;
 let isLocked = false;
@@ -32,9 +35,6 @@ createMenu({
   onSensitivity: (s) => {
     settings.sensitivity = s;
     saveSettings({ sensitivity: s });
-    engine.config.pointerSpeed = s; // Direct access or via callback
-    // PointerLockControls usually has pointerSpeed property, engine wrapper might need setter
-    // We'll assume engine handles config updates or we add a setter
     if (engine.controls) engine.controls.pointerSpeed = Number(s);
   },
   onLevel: (l) => {
@@ -118,7 +118,7 @@ function getHUDState() {
     fps: 60, // Updated via callback
     quality: engine ? engine.quality : 'high',
     level: engine ? engine.currentLevel : 'backrooms',
-    proximity: 0
+    proximity: engine ? (1 - Math.min(engine.nearestDist, 20)/20) : 0
   };
 }
 // Init
@@ -130,7 +130,17 @@ initBoot(() => {
   engine.quality = settings.quality;
   engine.currentLevel = settings.level;
   if (engine.controls) engine.controls.pointerSpeed = Number(settings.sensitivity);
-  // Volume handled in audio init/resume
   engine.setLevel(settings.level);
   showStart(true);
+});
+// Visibility & Cleanup
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (engine && !engine.isDead && hasStarted) engine.saveState();
+  } else {
+    resumeAudio();
+  }
+});
+window.addEventListener('beforeunload', () => {
+  if (engine) engine.dispose();
 });
