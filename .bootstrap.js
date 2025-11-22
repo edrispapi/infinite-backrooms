@@ -94,7 +94,8 @@ function runSetupCommands() {
     "bun install react react-dom three framer-motion lucide-react clsx tailwind-merge @radix-ui/react-slot @radix-ui/react-dialog @radix-ui/react-slider",
     "bun install -d vite @vitejs/plugin-react tailwindcss postcss autoprefixer @types/react @types/react-dom @types/three",
     "bun install path",
-    "bun add url"
+    "bun add url",
+    "bun add -d @types/node"
 ];
     
     if (commands.length === 0) {
