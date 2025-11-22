@@ -77,25 +77,7 @@ function updateWranglerJsonc() {
 }
 
 function runSetupCommands() {
-    const commands = [
-    "bun add react@^18.3.1",
-    "bun add react-dom@^18.3.1",
-    "bun add @types/react@^18.3.12 -d",
-    "bun add @types/react-dom@^18.3.1 -d",
-    "bun add three@^0.165.0",
-    "bun add framer-motion@^10.18.0",
-    "bun add lucide-react@^0.263.1",
-    "bun add clsx@^2.1.1",
-    "bun add tailwind-merge@^2.5.2",
-    "bun add @radix-ui/react-slot@^1.1.0",
-    "bun add @radix-ui/react-dialog@^1.1.1",
-    "bun add @radix-ui/react-slider@^1.2.0",
-    "bun add tailwindcss@^3.4.0 -d",
-    "bun install react react-dom three framer-motion lucide-react clsx tailwind-merge @radix-ui/react-slot @radix-ui/react-dialog @radix-ui/react-slider",
-    "bun install -d vite @vitejs/plugin-react tailwindcss postcss autoprefixer @types/react @types/react-dom @types/three",
-    "bun install path",
-    "bun add url"
-];
+    const commands = [];
     
     if (commands.length === 0) {
         console.log('⊘ No setup commands to run');
