@@ -1,5 +1,5 @@
 {
-  "name": "liminal-zero-4un6j39zrtd6j6yyfu7yi",
+  "name": "minimal-js",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -7,8 +7,7 @@
     "dev": "bun scripts/dev.ts",
     "build": "wrangler build",
     "deploy": "wrangler deploy",
-    "lint": "eslint --cache -f json --quiet .",
-    "prepare": "bun .bootstrap.js || true"
+    "lint": "eslint --cache -f json --quiet ."
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
@@ -28,6 +27,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4",
     "@eslint/js": "^9",
+    "@types/node": "^24.10.1",
     "@types/react": "^19.2.6",
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.181.0",
