@@ -7,7 +7,7 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { RGBShiftShader } from 'three/examples/jsm/shaders/RGBShiftShader.js';
 import { initAudio, resumeAudio, setVolume, toggleMute, setupLevelAudio, playFootstep, playBreath, updateEnemyNoise, playDeath, disposeAudio } from '../../audio.js';
 import { createBackroomsManager } from '../../worlds/backrooms.js';
-import { setupHill } from '../../worlds/hill.js';
+import { createHillWorld } from '../../worlds/hill.js';
 import { saveGame } from '../../settings.js';
 const NoiseShader = {
   uniforms: {
@@ -162,7 +162,7 @@ export default class BackroomsEngine {
     this.setupEnemies();
     setupLevelAudio(level);
     if (level !== 'backrooms') {
-      this.wallBoxes = [...this.staticColliders];
+      // Static colliders are handled by managers now
     }
   }
   setupWorld() {
@@ -187,7 +187,16 @@ export default class BackroomsEngine {
         this.backroomsManager.dispose();
         this.backroomsManager = null;
       }
-      this.staticColliders = setupHill(this.worldGroup);
+      if (this.backroomsManager) {
+        this.backroomsManager.dispose();
+        this.backroomsManager = null;
+      }
+      this.hillManager = createHillWorld(
+        this.scene,
+        this.wallBoxes,
+        this.config,
+        (entity) => this.entities.push(entity)
+      );
     }
   }
   disposeWorld() {
@@ -408,18 +417,8 @@ export default class BackroomsEngine {
       const object = hit.object;
       const dist = hit.distance;
       // Check Entities (Pickups)
-      const entity = this.entities.find(e => e.mesh === object);
-      if (entity && entity.type === 'pickup') {
-        if (dist < entity.radius) {
-          console.log(entity.prompt);
-          this.scene.remove(entity.mesh);
-          if (entity.mesh.geometry) entity.mesh.geometry.dispose();
-          if (entity.mesh.material) entity.mesh.material.dispose();
-          this.entities.splice(this.entities.indexOf(entity), 1);
-          this.callbacks.onInteract(`Collected: ${entity.prompt}`);
-          return;
-        }
-      }
+
+
       // Check Doors (Legacy)
       if (object.name === 'door' && dist < 3) {
         this.callbacks.onInteract('Door');
@@ -498,3 +497,34 @@ export default class BackroomsEngine {
     resumeAudio();
   }
 }
+    this.hillManager = null;
+    this.hillManager = null;
+    this.hillManager = null;
+    if (this.hillManager) {
+      this.hillManager.dispose();
+      this.hillManager = null;
+    }
+      if (entity) {
+        if (entity.type === 'door' && entity.kind === 'toBackrooms' && dist < entity.radius) {
+          this.setLevel('backrooms');
+          this.callbacks.onInteract('سوئیچ به Backrooms!');
+          return;
+        }
+        if (entity.type === 'pickup' && dist < entity.radius) {
+          if (entity.kind === 'battery') {
+            this.flashlight.distance = Math.min(50, (this.flashlight.distance || 30) + 5);
+            this.flashlight.intensity = Math.min(3, (this.flashlight.intensity || 2) + 0.5);
+          } else if (entity.kind === 'medkit') {
+            this.sanity = Math.min(100, this.sanity + 20);
+            this.stamina = Math.min(100, this.stamina + 20);
+            this.callbacks.onSanityUpdate(this.sanity);
+            this.callbacks.onStaminaUpdate(this.stamina);
+          }
+          this.scene.remove(entity.mesh);
+          if (entity.mesh.geometry) entity.mesh.geometry.dispose();
+          if (entity.mesh.material) entity.mesh.material.dispose();
+          this.entities.splice(this.entities.indexOf(entity), 1);
+          this.callbacks.onInteract(entity.prompt);
+          return;
+        }
+      }

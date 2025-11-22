@@ -108,7 +108,11 @@ const callbacks = {
     showDeath(true);
   },
   onInteract: (name) => {
-    addHint(`Interacted with ${name} / تعامل با ${name}`);
+    if (/[\u0600-\u06FF]/.test(name)) {
+      addHint(name);
+    } else {
+      addHint(`Interacted with ${name} / تعامل با ${name}`);
+    }
   }
 };
 function getHUDState() {
