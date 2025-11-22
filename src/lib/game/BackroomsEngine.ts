@@ -14,6 +14,8 @@ type EngineParams = {
   onQualityChange?: (quality: 'high' | 'low') => void;
   onVolumeChange?: (volume: number) => void;
   onMute?: () => void;
+  onDeath?: () => void;
+  onSensitivityChange?: (sens: number) => void;
 };
 type GameConfig = {
   walkSpeed: number;
@@ -26,6 +28,19 @@ type GameConfig = {
   cellSize: number;
   roomRadius: number;
 };
+type EnemyType = 'stalker' | 'sprinter' | 'lurker';
+interface Enemy {
+  mesh: THREE.Mesh;
+  type: EnemyType;
+  detect: number;
+  chase: number;
+  walk: number;
+  damageRadius: number;
+  velocity: THREE.Vector3;
+  wanderTimer: number;
+  wanderDir: THREE.Vector3;
+  burstActive: boolean;
+}
 const DEFAULT_CONFIG: GameConfig = {
   walkSpeed: 4.0,
   runSpeed: 7.0,
@@ -104,9 +119,22 @@ export class BackroomsEngine {
   private wallMat!: THREE.MeshStandardMaterial;
   // Audio
   private audioContext: AudioContext | null = null;
+  private masterGain: GainNode | null = null;
   private humOscillator: OscillatorNode | null = null;
   private humGain: GainNode | null = null;
-  private baseVolume = 0.05;
+  private footstepOsc: OscillatorNode | null = null;
+  private footstepGain: GainNode | null = null;
+  private breathingOsc: OscillatorNode | null = null;
+  private breathingGain: GainNode | null = null;
+  private enemyBus: GainNode | null = null;
+  private deathOsc: OscillatorNode | null = null;
+  private deathGain: GainNode | null = null;
+  private audioNodes: { node: AudioNode, dispose?: () => void }[] = [];
+  private baseVolume = 0.8;
+  private lastFootstep = 0;
+  private stepInterval = 0.48;
+  private lastBreath = 0;
+  private breathInterval = 3;
   // Gameplay Stats
   private sanity = { current: 100, max: 100 };
   private lastEmittedSanity = 100;
@@ -115,11 +143,10 @@ export class BackroomsEngine {
   private quality: 'high' | 'low' = 'high';
   private fpsSamples: number[] = [];
   private lastFPSUpdate = 0;
-  // Enemy
-  private enemy?: THREE.Mesh;
-  private enemyVelocity = new THREE.Vector3();
-  private wanderTimer = 0;
-  private wanderDir = new THREE.Vector3();
+  private isDead = false;
+  private nearestDist = Infinity;
+  // Enemies
+  private enemies: Enemy[] = [];
   constructor(container: HTMLElement, params: EngineParams) {
     this.container = container;
     this.params = params;
@@ -131,7 +158,6 @@ export class BackroomsEngine {
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    // Color space fix for modern three.js
     if ('outputColorSpace' in this.renderer) {
       (this.renderer as any).outputColorSpace = THREE.SRGBColorSpace;
     } else {
@@ -150,7 +176,6 @@ export class BackroomsEngine {
     // 5. Controls
     this.controls = new PointerLockControls(this.camera, document.body);
     this.scene.add(this.controls.getObject());
-    // Event Listeners
     this.controls.addEventListener('lock', () => {
       this.params.onLockChange(true);
       this.resumeAudio();
@@ -165,8 +190,8 @@ export class BackroomsEngine {
     window.addEventListener('resize', this.onWindowResize);
     // 9. Audio
     this.initAudio();
-    // 10. Enemy
-    this.setupEnemy();
+    // 10. Enemies
+    this.setupEnemies();
     // 11. Initial Generation
     this.updateRooms();
     // 12. Start Loop
@@ -174,15 +199,12 @@ export class BackroomsEngine {
   }
   private setupPostProcessing() {
     this.composer = new EffectComposer(this.renderer);
-    // Render Pass
     const renderPass = new RenderPass(this.scene, this.camera);
     this.composer.addPass(renderPass);
-    // RGB Shift (Chromatic Aberration)
     const rgbPass = new ShaderPass(RGBShiftShader);
     rgbPass.uniforms.amount.value = 0.0015;
     this.composer.addPass(rgbPass);
     this.vhsPasses.push(rgbPass);
-    // Noise Pass
     const noisePass = new ShaderPass(NoiseShader);
     noisePass.uniforms.amount.value = 0.03;
     this.composer.addPass(noisePass);
@@ -210,20 +232,74 @@ export class BackroomsEngine {
       metalness: 0.0
     });
   }
-  private setupEnemy() {
-    const geometry = new THREE.CapsuleGeometry(0.5, 2, 4, 8);
-    const material = new THREE.MeshStandardMaterial({
-      color: 0xff0000,
-      emissive: 0x440000,
-      roughness: 0.4
+  private setupEnemies() {
+    // Clear existing if any
+    this.enemies.forEach(e => {
+      this.scene.remove(e.mesh);
+      e.mesh.geometry.dispose();
+      (e.mesh.material as THREE.Material).dispose();
     });
-    this.enemy = new THREE.Mesh(geometry, material);
-    this.enemy.position.set(6, 1.75, -6);
-    // Enemy Glow
-    const light = new THREE.PointLight(0xff0000, 0.5, 10);
-    light.position.set(0, 0, 0);
-    this.enemy.add(light);
-    this.scene.add(this.enemy);
+    this.enemies = [];
+    const createEnemyMesh = (color: number) => {
+      const geometry = new THREE.CapsuleGeometry(0.5, 2, 4, 8);
+      const material = new THREE.MeshStandardMaterial({
+        color: color,
+        emissive: 0x440000,
+        roughness: 0.4
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      const light = new THREE.PointLight(color, 0.5, 10);
+      mesh.add(light);
+      return mesh;
+    };
+    // 1. Stalker
+    const stalker = createEnemyMesh(0xff0000);
+    stalker.position.set(8, 1.75, -10);
+    this.scene.add(stalker);
+    this.enemies.push({
+      mesh: stalker,
+      type: 'stalker',
+      detect: 18,
+      chase: 5,
+      walk: 3,
+      damageRadius: 3,
+      velocity: new THREE.Vector3(),
+      wanderTimer: 0,
+      wanderDir: new THREE.Vector3(),
+      burstActive: false
+    });
+    // 2. Sprinter
+    const sprinter = createEnemyMesh(0xff3300);
+    sprinter.position.set(-12, 1.75, 6);
+    this.scene.add(sprinter);
+    this.enemies.push({
+      mesh: sprinter,
+      type: 'sprinter',
+      detect: 14,
+      chase: 7.2,
+      walk: 2.4,
+      damageRadius: 3.2,
+      velocity: new THREE.Vector3(),
+      wanderTimer: 0,
+      wanderDir: new THREE.Vector3(),
+      burstActive: false
+    });
+    // 3. Lurker
+    const lurker = createEnemyMesh(0x880000);
+    lurker.position.set(16, 1.75, 16);
+    this.scene.add(lurker);
+    this.enemies.push({
+      mesh: lurker,
+      type: 'lurker',
+      detect: 16,
+      chase: 4.5,
+      walk: 2,
+      damageRadius: 3.4,
+      velocity: new THREE.Vector3(),
+      wanderTimer: 0,
+      wanderDir: new THREE.Vector3(),
+      burstActive: false
+    });
   }
   private setupInput() {
     document.addEventListener('keydown', this.onKeyDown);
@@ -234,19 +310,60 @@ export class BackroomsEngine {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioContextClass) return;
       this.audioContext = new AudioContextClass();
-      // Create oscillator for the hum
+      // Master Gain
+      this.masterGain = this.audioContext.createGain();
+      this.masterGain.gain.setValueAtTime(this.baseVolume, this.audioContext.currentTime);
+      this.masterGain.connect(this.audioContext.destination);
+      this.audioNodes.push({ node: this.masterGain });
+      // 1. Hum (Background)
       this.humOscillator = this.audioContext.createOscillator();
       this.humOscillator.type = 'sine';
-      this.humOscillator.frequency.setValueAtTime(60, this.audioContext.currentTime); // 60Hz hum
-      // Gain node for volume control
+      this.humOscillator.frequency.setValueAtTime(60, this.audioContext.currentTime);
       this.humGain = this.audioContext.createGain();
-      this.humGain.gain.setValueAtTime(this.baseVolume, this.audioContext.currentTime);
-      // Connect
+      this.humGain.gain.setValueAtTime(0.08, this.audioContext.currentTime);
       this.humOscillator.connect(this.humGain);
-      this.humGain.connect(this.audioContext.destination);
-      // Start
+      this.humGain.connect(this.masterGain);
       this.humOscillator.start();
-      // Suspend initially until user interaction
+      this.audioNodes.push({ node: this.humOscillator, dispose: () => this.humOscillator?.stop() });
+      this.audioNodes.push({ node: this.humGain });
+      // 2. Footsteps
+      this.footstepOsc = this.audioContext.createOscillator();
+      this.footstepOsc.type = 'square';
+      this.footstepOsc.frequency.setValueAtTime(130, this.audioContext.currentTime);
+      this.footstepGain = this.audioContext.createGain();
+      this.footstepGain.gain.setValueAtTime(0, this.audioContext.currentTime);
+      this.footstepOsc.connect(this.footstepGain);
+      this.footstepGain.connect(this.masterGain);
+      this.footstepOsc.start();
+      this.audioNodes.push({ node: this.footstepOsc, dispose: () => this.footstepOsc?.stop() });
+      this.audioNodes.push({ node: this.footstepGain });
+      // 3. Breathing
+      this.breathingOsc = this.audioContext.createOscillator();
+      this.breathingOsc.type = 'sawtooth';
+      this.breathingOsc.frequency.setValueAtTime(40, this.audioContext.currentTime);
+      this.breathingGain = this.audioContext.createGain();
+      this.breathingGain.gain.setValueAtTime(0, this.audioContext.currentTime);
+      this.breathingOsc.connect(this.breathingGain);
+      this.breathingGain.connect(this.masterGain);
+      this.breathingOsc.start();
+      this.audioNodes.push({ node: this.breathingOsc, dispose: () => this.breathingOsc?.stop() });
+      this.audioNodes.push({ node: this.breathingGain });
+      // 4. Enemy Bus
+      this.enemyBus = this.audioContext.createGain();
+      this.enemyBus.gain.setValueAtTime(0, this.audioContext.currentTime);
+      this.enemyBus.connect(this.masterGain);
+      this.audioNodes.push({ node: this.enemyBus });
+      // 5. Death Blast
+      this.deathOsc = this.audioContext.createOscillator();
+      this.deathOsc.type = 'triangle';
+      this.deathOsc.frequency.setValueAtTime(50, this.audioContext.currentTime);
+      this.deathGain = this.audioContext.createGain();
+      this.deathGain.gain.setValueAtTime(0, this.audioContext.currentTime);
+      this.deathOsc.connect(this.deathGain);
+      this.deathGain.connect(this.masterGain);
+      this.deathOsc.start();
+      this.audioNodes.push({ node: this.deathOsc, dispose: () => this.deathOsc?.stop() });
+      this.audioNodes.push({ node: this.deathGain });
       if (this.audioContext.state === 'running') {
         this.audioContext.suspend();
       }
@@ -260,12 +377,20 @@ export class BackroomsEngine {
     }
   }
   public setVolume(volume: number) {
-    if (this.humGain && this.audioContext) {
-      // volume is 0-1
-      this.humGain.gain.setValueAtTime(this.baseVolume * volume, this.audioContext.currentTime);
+    if (this.masterGain && this.audioContext) {
+      this.masterGain.gain.setValueAtTime(volume, this.audioContext.currentTime);
     }
     if (this.params.onVolumeChange) {
       this.params.onVolumeChange(volume);
+    }
+  }
+  public setSensitivity(sens: number) {
+    // PointerLockControls uses pointerSpeed
+    if (this.controls) {
+      this.controls.pointerSpeed = sens;
+    }
+    if (this.params.onSensitivityChange) {
+      this.params.onSensitivityChange(sens);
     }
   }
   public toggleMute() {
@@ -282,16 +407,36 @@ export class BackroomsEngine {
   }
   public toggleQuality() {
     this.quality = this.quality === 'high' ? 'low' : 'high';
-    // Update config
     this.config.roomRadius = this.quality === 'high' ? 2 : 1;
     this.config.cellSize = this.quality === 'high' ? 14 : 16.8;
     this.renderer.setPixelRatio(this.quality === 'high' ? 1.5 : 1.0);
-    // Dispose and regenerate
     this.disposeRooms();
     this.updateRooms();
     if (this.params.onQualityChange) {
       this.params.onQualityChange(this.quality);
     }
+  }
+  public reset() {
+    this.isDead = false;
+    this.sanity.current = 100;
+    this.stamina.current = 100;
+    this.nearestDist = Infinity;
+    // Reset Player Position
+    this.controls.getObject().position.set(0, this.config.playerHeight, 0);
+    this.controls.getObject().rotation.set(0, 0, 0);
+    // Reset World
+    this.disposeRooms();
+    this.setupEnemies();
+    this.updateRooms();
+    // Reset Audio
+    this.resumeAudio();
+    if (this.deathGain && this.audioContext) {
+      this.deathGain.gain.setValueAtTime(0, this.audioContext.currentTime);
+    }
+    // Emit updates
+    if (this.params.onSanityUpdate) this.params.onSanityUpdate(100);
+    if (this.params.onStaminaUpdate) this.params.onStaminaUpdate(100);
+    if (this.params.onProximityUpdate) this.params.onProximityUpdate(0);
   }
   private onKeyDown = (event: KeyboardEvent) => {
     switch (event.code) {
@@ -314,12 +459,10 @@ export class BackroomsEngine {
   };
   private disposeRooms() {
     this.activeRooms.forEach(({ group, colliders }) => {
-      // Remove colliders
       for (const box of colliders) {
         const idx = this.wallBoxes.indexOf(box);
         if (idx > -1) this.wallBoxes.splice(idx, 1);
       }
-      // Dispose meshes
       group.traverse((obj) => {
         if (obj instanceof THREE.Mesh) {
           if (obj.geometry) obj.geometry.dispose();
@@ -358,17 +501,19 @@ export class BackroomsEngine {
       this.renderer.dispose();
       this.container.removeChild(this.renderer.domElement);
     }
-    // Clean up enemy
-    if (this.enemy) {
-      this.scene.remove(this.enemy);
-      this.enemy.geometry.dispose();
-      this.enemy.material.dispose();
-      this.enemy = undefined;
-    }
+    this.enemies.forEach(e => {
+      this.scene.remove(e.mesh);
+      e.mesh.geometry.dispose();
+      (e.mesh.material as THREE.Material).dispose();
+    });
     this.disposeRooms();
     if (this.floorMat) this.floorMat.dispose();
     if (this.wallMat) this.wallMat.dispose();
     // Clean up audio
+    this.audioNodes.forEach(n => {
+      if (n.dispose) n.dispose();
+      n.node.disconnect();
+    });
     if (this.audioContext) {
       this.audioContext.close();
     }
@@ -393,27 +538,140 @@ export class BackroomsEngine {
     }
   }
   private update(dt: number) {
-    // Update Shader Time
     this.vhsPasses.forEach(pass => {
         if (pass.uniforms.time) {
             pass.uniforms.time.value += dt;
         }
     });
-    if (this.controls.isLocked) {
+    if (this.controls.isLocked && !this.isDead) {
       this.updatePlayer(dt);
       this.updateRooms();
+      this.updateEnemies(dt);
       this.updateStats(dt);
-      this.updateEnemy(dt);
+      this.updateAudio(dt);
+    }
+  }
+  private updateEnemies(dt: number) {
+    const playerPos = this.controls.getObject().position;
+    let nearest = Infinity;
+    this.enemies.forEach(enemy => {
+      const dist = enemy.mesh.position.distanceTo(playerPos);
+      if (dist < nearest) nearest = dist;
+      // AI Logic
+      if (dist < enemy.detect) {
+        // Chase
+        const direction = playerPos.clone().sub(enemy.mesh.position).normalize();
+        // Sprinter Burst Logic
+        if (enemy.type === 'sprinter' && dist < 0.4 * enemy.detect && !enemy.burstActive) {
+          enemy.burstActive = true;
+          enemy.chase *= 1.3;
+          setTimeout(() => {
+            enemy.burstActive = false;
+            enemy.chase /= 1.3;
+          }, 2000);
+        }
+        const speed = dist < 10 ? enemy.chase : enemy.walk;
+        const targetVelocity = direction.multiplyScalar(speed);
+        enemy.velocity.lerp(targetVelocity, 0.1);
+        // Lurker Teleport Logic
+        if (enemy.type === 'lurker' && Math.random() < 0.005 && enemy.wanderTimer <= 0) {
+          // Teleport behind player
+          const behind = playerPos.clone().add(direction.multiplyScalar(-8));
+          enemy.mesh.position.copy(behind);
+          enemy.wanderTimer = Math.random() * 2 + 1;
+        }
+        enemy.mesh.lookAt(playerPos.x, enemy.mesh.position.y, playerPos.z);
+        enemy.mesh.scale.lerp(new THREE.Vector3(1.2, 1.2, 1.2), 0.05);
+      } else {
+        // Wander
+        if (enemy.wanderTimer <= 0) {
+          enemy.wanderDir.random().subScalar(0.5).normalize().multiplyScalar(enemy.walk);
+          enemy.wanderDir.y = 0;
+          enemy.wanderTimer = 2 + Math.random() * 3;
+        }
+        enemy.velocity.lerp(enemy.wanderDir, 0.05);
+        enemy.wanderTimer -= dt;
+        enemy.mesh.scale.lerp(new THREE.Vector3(1.0, 1.0, 1.0), 0.05);
+      }
+      // Apply movement
+      const move = enemy.velocity.clone().multiplyScalar(dt);
+      enemy.mesh.position.add(move);
+      enemy.mesh.position.y = 1.75;
+      // Death Check
+      if (dist < enemy.damageRadius) {
+        this.triggerDeath();
+        return;
+      }
+    });
+    this.nearestDist = nearest;
+    // Global Proximity Update
+    const proximity = Math.max(0, 1 - (nearest / 20));
+    if (this.params.onProximityUpdate) {
+      this.params.onProximityUpdate(proximity);
+    }
+  }
+  private updateAudio(dt: number) {
+    if (!this.audioContext) return;
+    const ctx = this.audioContext;
+    // 1. Footsteps
+    const isMoving = this.keyState.forward || this.keyState.back || this.keyState.left || this.keyState.right;
+    if (isMoving && this.footstepOsc && this.footstepGain) {
+      if (performance.now() - this.lastFootstep > this.stepInterval * 1000) {
+        this.footstepOsc.frequency.value = 110 + Math.random() * 40;
+        this.footstepGain.gain.setValueAtTime(0.15, ctx.currentTime);
+        this.footstepGain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+        this.lastFootstep = performance.now();
+        this.stepInterval = this.keyState.run ? 0.32 : 0.48;
+      }
+    }
+    // 2. Breathing
+    const proximity = Math.max(0, 1 - (this.nearestDist / 20));
+    if ((this.stamina.current < 30 || proximity > 0.5) && this.breathingOsc && this.breathingGain) {
+      if (performance.now() - this.lastBreath > this.breathInterval * 1000) {
+        this.breathingOsc.frequency.value = 30 + Math.random() * 20;
+        this.breathingGain.gain.setValueAtTime(0.1, ctx.currentTime);
+        this.breathingGain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1.5);
+        this.lastBreath = performance.now();
+        this.breathInterval = 2.5 + Math.random() * 1.2;
+      }
+    }
+    // 3. Enemy Noise
+    if (this.enemyBus) {
+      if (this.nearestDist < 20) {
+        this.enemyBus.gain.linearRampToValueAtTime(0.35 * (1 - this.nearestDist / 20), ctx.currentTime + 0.5);
+      } else {
+        this.enemyBus.gain.linearRampToValueAtTime(0, ctx.currentTime + 1);
+      }
+    }
+  }
+  private triggerDeath() {
+    if (this.isDead) return;
+    this.isDead = true;
+    // Death Sound
+    if (this.deathOsc && this.deathGain && this.audioContext) {
+      const ctx = this.audioContext;
+      this.deathOsc.frequency.setValueAtTime(80, ctx.currentTime);
+      this.deathOsc.frequency.exponentialRampToValueAtTime(20, ctx.currentTime + 2);
+      this.deathGain.gain.setValueAtTime(0.3, ctx.currentTime);
+      this.deathGain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 3);
+    }
+    if (this.params.onDeath) {
+      this.params.onDeath();
     }
   }
   private updateStats(dt: number) {
-    // Sanity (Natural Drain)
-    this.sanity.current = Math.max(0, this.sanity.current - (0.1 * dt));
+    // Sanity (Natural Drain + Proximity)
+    const proximity = Math.max(0, 1 - (this.nearestDist / 20));
+    let drain = 0.1;
+    if (proximity > 0.5) {
+      drain += 50;
+    }
+    this.sanity.current = Math.max(0, this.sanity.current - (drain * dt));
     // Stamina
     this.updateStamina(dt);
     // FPS
     this.updateFPS(dt);
-    // Emit Sanity if changed significantly
+    // Emit Sanity
     if (Math.abs(this.sanity.current - this.lastEmittedSanity) > 0.5) {
         this.lastEmittedSanity = this.sanity.current;
         if (this.params.onSanityUpdate) {
@@ -447,50 +705,6 @@ export class BackroomsEngine {
       this.lastFPSUpdate = now;
     }
   }
-  private updateEnemy(dt: number) {
-    if (!this.enemy || !this.controls.isLocked) return;
-    const playerPos = this.controls.getObject().position;
-    const dist = this.enemy.position.distanceTo(playerPos);
-    // Proximity / Danger
-    let proximity = 0;
-    if (dist < 4) {
-      proximity = 1 - (dist / 4); // 1 at dist=0, 0 at dist=4
-    }
-    if (this.params.onProximityUpdate) {
-      this.params.onProximityUpdate(proximity);
-    }
-    // Sanity Drain from Proximity
-    if (proximity > 0.5) {
-        this.sanity.current = Math.max(0, this.sanity.current - (50 * dt));
-    }
-    // AI Logic
-    const chaseSpeed = dist < 18 ? 5 : 0;
-    if (chaseSpeed > 0) {
-      // Chase
-      const direction = playerPos.clone().sub(this.enemy.position).normalize();
-      const targetVelocity = direction.multiplyScalar(chaseSpeed);
-      this.enemyVelocity.lerp(targetVelocity, 0.1);
-      this.enemy.lookAt(playerPos.x, this.enemy.position.y, playerPos.z);
-      // Animate Scale (Breathing/Pulsing effect when chasing)
-      this.enemy.scale.lerp(new THREE.Vector3(1.2, 1.2, 1.2), 0.05);
-    } else {
-      // Wander
-      if (this.wanderTimer <= 0) {
-        this.wanderDir.random().subScalar(0.5).normalize().multiplyScalar(3);
-        this.wanderDir.y = 0; // Keep on ground plane
-        this.wanderTimer = 2 + Math.random() * 3;
-      }
-      this.enemyVelocity.lerp(this.wanderDir, 0.05);
-      this.wanderTimer -= dt;
-      // Reset Scale
-      this.enemy.scale.lerp(new THREE.Vector3(1.0, 1.0, 1.0), 0.05);
-    }
-    // Apply movement
-    const move = this.enemyVelocity.clone().multiplyScalar(dt);
-    this.enemy.position.add(move);
-    // Keep enemy on floor (simple)
-    this.enemy.position.y = 1.75;
-  }
   // --- GAMEPLAY LOGIC ---
   private updatePlayer(dt: number) {
     const moveDir = new THREE.Vector3();
@@ -503,7 +717,6 @@ export class BackroomsEngine {
     if (this.keyState.back) moveDir.sub(forward);
     if (this.keyState.left) moveDir.sub(right);
     if (this.keyState.right) moveDir.add(right);
-    // Disable run if stamina depleted
     const canRun = this.keyState.run && this.stamina.current > 0;
     if (moveDir.lengthSq() > 0) {
       moveDir.normalize();
@@ -560,7 +773,6 @@ export class BackroomsEngine {
     const cx = this.worldToCell(playerPos.x);
     const cz = this.worldToCell(playerPos.z);
     const needed = new Set<string>();
-    // Load nearby
     for (let dz = -this.config.roomRadius; dz <= this.config.roomRadius; dz++) {
       for (let dx = -this.config.roomRadius; dx <= this.config.roomRadius; dx++) {
         const key = this.getRoomKey(cx + dx, cz + dz);
@@ -570,16 +782,13 @@ export class BackroomsEngine {
         }
       }
     }
-    // Unload far
     for (const [key, value] of this.activeRooms) {
       if (!needed.has(key)) {
         const { group, colliders } = value;
-        // Remove colliders from master list
         for (const box of colliders) {
           const idx = this.wallBoxes.indexOf(box);
           if (idx !== -1) this.wallBoxes.splice(idx, 1);
         }
-        // Clean up ThreeJS objects
         group.traverse((obj) => {
             if(obj instanceof THREE.Mesh) {
                 if (obj.geometry) obj.geometry.dispose();

@@ -12,26 +12,27 @@ export function StartOverlay({ onStart }: StartOverlayProps) {
       </h1>
       <div className="max-w-lg space-y-6 bg-black/40 backdrop-blur-sm p-8 rounded-lg border border-white/10 shadow-2xl" dir="rtl">
         <p className="text-lg leading-relaxed opacity-90">
-          ب��ای شروع روی دکمه زیر کلیک کن، ماوس قفل می‌شه و می‌تونی با
+          برای شروع روی دکمه زیر کلیک کن، ماوس قفل می‌شه و می‌تونی با
           <strong className="mx-1 text-yellow-200 font-mono">W A S D</strong>
-          حرک�� کنی و با ماوس نگاه کنی.
+          حرکت کنی و با ماوس نگاه کنی.
         </p>
         <p className="text-base opacity-80">
-          برای دویدن کلید <strong className="mx-1 text-yellow-200 font-mono">Shift</strong> رو نگه دا��.
+          برای دویدن کلی�� <strong className="mx-1 text-yellow-200 font-mono">Shift</strong> رو نگه دا��.
         </p>
         <p className="text-base opacity-80">
           برای تغییر کیفیت <strong className="mx-1 text-yellow-200 font-mono">Q</strong> بزن.
+          برای توقف <strong className="mx-1 text-yellow-200 font-mono">ESC</strong> فشار بده.
         </p>
       </div>
-      <Button 
+      <Button
         onClick={onStart}
         className="mt-12 px-12 py-6 text-lg bg-white/10 hover:bg-white/20 border border-white/20 backdrop-blur-md transition-all duration-300 hover:scale-105 hover:shadow-[0_0_20px_rgba(255,255,255,0.2)] rounded-full group"
       >
         <Play className="ml-3 w-5 h-5 group-hover:translate-x-1 transition-transform" />
-        شروع ��ازی
+        شروع بازی
       </Button>
       <div className="mt-8 text-xs opacity-50 font-mono tracking-widest uppercase">
-        Press ESC to Pause / Release Cursor
+        Press ESC to Pause / Release Cursor - برای خروج از بازی، Escape رو بزن
       </div>
     </div>
   );
