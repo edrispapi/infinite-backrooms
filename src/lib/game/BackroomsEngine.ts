@@ -168,7 +168,14 @@ export class BackroomsEngine {
     // 1. Renderer
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    // Mobile Optimization Check
+    const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+    if (isMobile) {
+      this.config.roomRadius = 1;
+      this.renderer.setPixelRatio(1.0);
+    } else {
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    }
     if ('outputColorSpace' in this.renderer) {
       (this.renderer as any).outputColorSpace = THREE.SRGBColorSpace;
     } else {
@@ -184,9 +191,21 @@ export class BackroomsEngine {
     this.camera.position.set(0, this.config.playerHeight, 0);
     // 4. Post-Processing
     this.setupPostProcessing();
-    // 5. Controls
+    // 5. Controls with Cross-Browser Fallback
     this.controls = new PointerLockControls(this.camera, document.body);
     this.scene.add(this.controls.getObject());
+    // Override lock to handle Safari/Mobile errors gracefully
+    const origLock = this.controls.lock.bind(this.controls);
+    this.controls.lock = () => {
+      try {
+        origLock();
+      } catch (e) {
+        console.warn('Pointer lock failed, retrying...', e);
+        setTimeout(() => {
+            try { origLock(); } catch (err) { console.error('Pointer lock retry failed', err); }
+        }, 100);
+      }
+    };
     this.controls.addEventListener('lock', () => {
       this.params.onLockChange(true);
       this.resumeAudio();
@@ -205,6 +224,7 @@ export class BackroomsEngine {
     this.start();
   }
   public setLevel(level: WorldType) {
+    if (this.currentLevel === level && this.worldGroup) return; // Avoid redundant rebuilds if already set (unless forced reset)
     this.currentLevel = level;
     if (this.params.onLevelChange) this.params.onLevelChange(level);
     // Reset Player
@@ -549,7 +569,7 @@ export class BackroomsEngine {
       console.warn('Audio initialization failed:', e);
     }
   }
-  private resumeAudio() {
+  public resumeAudio() {
     if (this.audioContext && this.audioContext.state === 'suspended') {
       this.audioContext.resume();
     }
@@ -586,7 +606,13 @@ export class BackroomsEngine {
     this.quality = this.quality === 'high' ? 'low' : 'high';
     this.config.roomRadius = this.quality === 'high' ? 2 : 1;
     this.config.cellSize = this.quality === 'high' ? 14 : 16.8;
-    this.renderer.setPixelRatio(this.quality === 'high' ? 1.5 : 1.0);
+    // Mobile check again to ensure we don't override mobile constraints
+    const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+    if (isMobile) {
+        this.renderer.setPixelRatio(1.0);
+    } else {
+        this.renderer.setPixelRatio(this.quality === 'high' ? 1.5 : 1.0);
+    }
     if (this.currentLevel === WorldType.BACKROOMS) {
       this.disposeRooms();
       this.updateRooms();
@@ -682,19 +708,46 @@ export class BackroomsEngine {
     this.disposeWorld();
     if (this.floorMat) this.floorMat.dispose();
     if (this.wallMat) this.wallMat.dispose();
+    // Exhaustive Scene Cleanup
+    this.scene.traverse((obj) => {
+        if (obj instanceof THREE.Object3D && !obj.parent) {
+            obj.traverse(child => {
+                if (child instanceof THREE.Mesh) {
+                    if (child.geometry && !child.geometry.disposed) child.geometry.dispose();
+                    if (child.material) {
+                        if (Array.isArray(child.material)) {
+                            child.material.forEach(mat => mat.dispose());
+                        } else {
+                            child.material.dispose();
+                        }
+                    }
+                }
+            });
+            obj.removeFromParent();
+        }
+    });
     // Clean up audio
     this.audioNodes.forEach(n => {
       if (n.dispose) n.dispose();
-      n.node.disconnect();
+      try { n.node.disconnect(); } catch(e) { /* ignore */ }
     });
+    this.audioNodes = [];
     if (this.audioContext) {
       this.audioContext.close();
+      this.audioContext = null;
     }
   }
   private start() {
     const animate = () => {
       this.animationId = requestAnimationFrame(animate);
-      const dt = Math.min(this.clock.getDelta(), 0.1);
+      let dt = Math.min(this.clock.getDelta(), 0.1);
+      // FPS Throttling for low-end devices
+      if (this.fpsSamples.length > 5) {
+          const avgFPS = this.fpsSamples.reduce((a,b) => a+b, 0) / this.fpsSamples.length;
+          if (avgFPS < 30) {
+              dt = Math.min(dt, 1/30);
+          }
+      }
       this.update(dt);
       if (this.composer) {
         this.composer.render();
@@ -1054,7 +1107,6 @@ export class BackroomsEngine {
       hole.position.set(hx, -1.25, hz);
       group.add(hole);
       // Add invisible walls around the hole to prevent walking into it
-      // We create 4 thin walls around the hole
       const holeSize = 1.5;
       const halfSize = holeSize / 2;
       const invisibleWallGeo = new THREE.BoxGeometry(holeSize, wallHeight, 0.1);
@@ -1080,12 +1132,6 @@ export class BackroomsEngine {
     group.updateMatrixWorld(true);
     group.traverse((obj) => {
       if (obj instanceof THREE.Mesh && obj !== floor && obj !== ceil) {
-        // Don't add the visual hole box itself as a collider (it's below floor),
-        // but DO add the invisible walls we created around it.
-        // The invisible walls are meshes, so they will be picked up here.
-        // We filter out the black hole box by checking its position Y or material if needed,
-        // but since it's below 0, collision check at player height (1.75) won't hit it anyway.
-        // However, to be safe and clean:
         if (obj.position.y > -1) {
             const box = new THREE.Box3().setFromObject(obj);
             this.wallBoxes.push(box);

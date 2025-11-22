@@ -3,6 +3,7 @@ import { Battery, Disc3, Brain, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Slider } from '@/components/ui/slider';
 import { WorldType } from '@/lib/game/BackroomsEngine';
+import { motion } from 'framer-motion';
 interface GameHUDProps {
   isLocked: boolean;
   sanity: number;
@@ -30,50 +31,54 @@ export function GameHUD({ isLocked, sanity, stamina, quality, fps, proximity, le
   return (
     <>
       {/* Danger Overlay */}
-      <div
+      <motion.div
         className={cn(
-          "absolute inset-0 transition-opacity duration-200 pointer-events-none z-30 mix-blend-multiply",
-          proximity > 0 ? "opacity-100" : "opacity-0"
+          "absolute inset-0 pointer-events-none z-30 transition-opacity duration-200",
+          "mix-blend-multiply sm:mix-blend-multiply" // Fallback for mobile if needed, though multiply works well
         )}
+        animate={{ opacity: proximity }}
         style={{
-          opacity: proximity,
           background: 'radial-gradient(circle, rgba(139,0,0,0.4) 0%, rgba(50,0,0,0) 80%)'
         }}
       />
       <div className={cn(
-        "absolute inset-0 pointer-events-none z-40 flex flex-col justify-between p-8 sm:p-12 font-mono select-none text-br-text transition-opacity duration-500",
+        "absolute inset-0 pointer-events-none z-40 flex flex-col justify-between p-4 sm:p-8 md:p-12 font-mono select-none text-br-text transition-opacity duration-500",
         !isLocked ? "opacity-40 blur-sm" : "opacity-100 blur-none"
       )}>
         {/* Top Bar */}
         <div className="flex justify-between items-start">
           <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-3">
-              <div className="w-4 h-4 rounded-full bg-red-600 animate-blink shadow-[0_0_10px_rgba(220,38,38,0.8)]" />
-              <span className="text-xl sm:text-2xl tracking-widest font-bold drop-shadow-md">REC</span>
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="w-3 h-3 sm:w-4 sm:h-4 rounded-full bg-red-600 animate-blink shadow-[0_0_10px_rgba(220,38,38,0.8)]" />
+              <span className="text-lg sm:text-xl md:text-2xl tracking-widest font-bold drop-shadow-md">REC</span>
               {/* Level Indicator */}
-              <div className="flex items-center gap-2 text-sm font-bold tracking-widest opacity-80 ml-4 border-l border-white/20 pl-4">
+              <div className="flex items-center gap-2 text-xs sm:text-sm font-bold tracking-widest opacity-80 ml-2 sm:ml-4 border-l border-white/20 pl-2 sm:pl-4">
                  <span className={level === WorldType.HILL ? 'text-blue-400' : 'text-yellow-400'}>LEVEL:</span>
                  <span>{level.toUpperCase()}</span>
               </div>
             </div>
-            <div className="text-sm opacity-70 tracking-wider">TAPE_004 // [LIVE_FEED]</div>
+            <div className="text-xs sm:text-sm opacity-70 tracking-wider">TAPE_004 // [LIVE_FEED]</div>
           </div>
-          <div className="text-right flex flex-col items-end gap-2">
-             <div className="flex items-center gap-2 text-xl sm:text-2xl font-bold drop-shadow-md">
-               <Battery className="w-6 h-6 sm:w-8 sm:h-8 fill-white/20" />
+          <div className="text-right flex flex-col items-end gap-1 sm:gap-2">
+             <div className="flex items-center gap-2 text-lg sm:text-xl md:text-2xl font-bold drop-shadow-md">
+               <Battery className="w-5 h-5 sm:w-6 sm:h-6 md:w-8 md:h-8 fill-white/20" />
                <span>84%</span>
              </div>
              {/* Quality Indicator */}
              <div className={cn(
-               "text-sm font-bold tracking-widest transition-colors",
+               "text-xs sm:text-sm font-bold tracking-widest transition-colors",
                quality === 'low' && "text-yellow-400 animate-pulse"
              )}>
                QUALITY: {quality.toUpperCase()}
              </div>
              {/* Sanity Meter */}
-             <div className="flex flex-col items-end gap-1 w-48 mt-2">
-               <div className="flex items-center gap-2 text-sm font-bold tracking-widest">
-                  <Brain className={cn("w-4 h-4", sanity < 30 && "animate-pulse text-red-500")} />
+             <motion.div 
+                className="flex flex-col items-end gap-1 w-32 sm:w-48 mt-1 sm:mt-2"
+                animate={sanity < 30 ? { opacity: [0.6, 1, 0.6] } : { opacity: 1 }}
+                transition={{ duration: 1, repeat: Infinity }}
+             >
+               <div className="flex items-center gap-2 text-xs sm:text-sm font-bold tracking-widest">
+                  <Brain className={cn("w-3 h-3 sm:w-4 sm:h-4", sanity < 30 && "text-red-500")} />
                   <span className={cn(sanity < 30 && "text-red-500")}>SANITY: {Math.floor(sanity)}%</span>
                </div>
                <Slider
@@ -83,11 +88,15 @@ export function GameHUD({ isLocked, sanity, stamina, quality, fps, proximity, le
                   className="w-full"
                   disabled
                />
-             </div>
+             </motion.div>
              {/* Stamina Meter */}
-             <div className="flex flex-col items-end gap-1 w-48 mt-2">
-               <div className="flex items-center gap-2 text-sm font-bold tracking-widest">
-                  <Zap className={cn("w-4 h-4", stamina < 20 && "text-red-500")} />
+             <motion.div 
+                className="flex flex-col items-end gap-1 w-32 sm:w-48 mt-1 sm:mt-2"
+                animate={stamina < 20 ? { opacity: [0.6, 1, 0.6] } : { opacity: 1 }}
+                transition={{ duration: 0.5, repeat: Infinity }}
+             >
+               <div className="flex items-center gap-2 text-xs sm:text-sm font-bold tracking-widest">
+                  <Zap className={cn("w-3 h-3 sm:w-4 sm:h-4", stamina < 20 && "text-red-500")} />
                   <span className={cn(stamina < 20 && "text-red-500")}>STAMINA: {Math.floor(stamina)}%</span>
                </div>
                <Slider
@@ -103,29 +112,34 @@ export function GameHUD({ isLocked, sanity, stamina, quality, fps, proximity, le
                   )}
                   disabled
                />
-             </div>
-             <div className="text-sm opacity-70 mt-1">ISO 800 F/2.8</div>
+             </motion.div>
+             <div className="text-[10px] sm:text-xs opacity-70 mt-1">ISO 800 F/2.8</div>
           </div>
         </div>
         {/* Center Crosshair (Minimal) */}
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-40">
-           <div className="w-1 h-8 bg-white/50 absolute left-1/2 -translate-x-1/2 -translate-y-1/2"></div>
-           <div className="w-8 h-1 bg-white/50 absolute left-1/2 -translate-x-1/2 -translate-y-1/2"></div>
-        </div>
+        <motion.div 
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-40"
+            initial={{ opacity: 0.4 }}
+            animate={{ opacity: [0.4, 0.6, 0.4] }}
+            transition={{ duration: 2, repeat: Infinity }}
+        >
+           <div className="w-1 h-6 sm:h-8 bg-white/50 absolute left-1/2 -translate-x-1/2 -translate-y-1/2"></div>
+           <div className="w-6 sm:w-8 h-1 bg-white/50 absolute left-1/2 -translate-x-1/2 -translate-y-1/2"></div>
+        </motion.div>
         {/* Bottom Bar */}
         <div className="flex justify-between items-end">
           <div className="flex flex-col">
-            <div className="text-lg sm:text-xl font-bold drop-shadow-md">
+            <div className="text-base sm:text-lg md:text-xl font-bold drop-shadow-md">
                {timeString}
             </div>
-            <div className="flex gap-4 mt-1">
-              <div className="text-xs opacity-60 font-light">JUN 12 1998</div>
-              <div className="text-xs opacity-60 font-mono">FPS: {localFPS}</div>
+            <div className="flex gap-2 sm:gap-4 mt-1">
+              <div className="text-[10px] sm:text-xs opacity-60 font-light">JUN 12 1998</div>
+              <div className="text-[10px] sm:text-xs opacity-60 font-mono">FPS: {localFPS}</div>
             </div>
           </div>
-          <div className="flex items-center gap-4 opacity-60">
-            <Disc3 className="w-8 h-8 animate-spin" style={{ animationDuration: '4s' }} />
-            <span className="text-xs tracking-widest">SAVING TO MAG-TAPE...</span>
+          <div className="flex items-center gap-2 sm:gap-4 opacity-60">
+            <Disc3 className="w-6 h-6 sm:w-8 sm:h-8 animate-spin" style={{ animationDuration: '4s' }} />
+            <span className="text-[10px] sm:text-xs tracking-widest">SAVING TO MAG-TAPE...</span>
           </div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { BackroomsEngine, WorldType } from './lib/game/BackroomsEngine';
 import { GameHUD } from './components/GameHUD';
@@ -46,24 +46,65 @@ export default function App() {
   useEffect(() => { localStorage.setItem('sensitivity', mouseSensitivity.toString()); }, [mouseSensitivity]);
   useEffect(() => { localStorage.setItem('masterVolume', (volume / 100).toString()); }, [volume]);
   useEffect(() => { localStorage.setItem('level', level); }, [level]);
+  // Resize Observer for Container (Optional dynamic scaling)
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver(() => {
+      // We could adjust state here if needed, but CSS/Tailwind handles most responsiveness.
+      // This ensures we catch container resize events even if window doesn't change (e.g. mobile toolbar)
+      engineRef.current?.onWindowResize();
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+  // Audio Resume on Visibility/Interaction
+  useEffect(() => {
+    const handleVisibility = () => {
+        if (document.visibilityState === 'visible') {
+            engineRef.current?.resumeAudio();
+        }
+    };
+    const handleClick = () => engineRef.current?.resumeAudio();
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('click', handleClick, { once: true });
+    window.addEventListener('touchstart', handleClick, { once: true });
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('click', handleClick);
+      window.removeEventListener('touchstart', handleClick);
+    };
+  }, []);
+  // Callbacks memoized to prevent unnecessary engine updates (though engine handles params in constructor)
+  // These are primarily for the engine to call BACK to React
+  const handleLockChange = useCallback((locked: boolean) => setIsLocked(locked), []);
+  const handleSanityUpdate = useCallback((val: number) => setSanity(val), []);
+  const handleStaminaUpdate = useCallback((val: number) => setStamina(val), []);
+  const handleProximityUpdate = useCallback((val: number) => setProximity(val), []);
+  const handleFPSUpdate = useCallback((val: number) => setFps(val), []);
+  const handleQualityChange = useCallback((val: 'high' | 'low') => setQuality(val), []);
+  const handleVolumeChange = useCallback((vol: number) => setVolume(vol * 100), []);
+  const handleMute = useCallback(() => setIsMuted(prev => !prev), []);
+  const handleDeath = useCallback(() => setIsDead(true), []);
+  const handleSensitivityChange = useCallback((sens: number) => {
+    setMouseSensitivity(sens);
+    localStorage.setItem('sensitivity', sens.toString());
+  }, []);
+  const handleLevelChange = useCallback((l: WorldType) => setLevel(l), []);
   useEffect(() => {
     if (!containerRef.current) return;
     // Initialize Engine
     const engine = new BackroomsEngine(containerRef.current, {
-      onLockChange: (locked) => setIsLocked(locked),
-      onSanityUpdate: (val) => setSanity(val),
-      onStaminaUpdate: (val) => setStamina(val),
-      onProximityUpdate: (val) => setProximity(val),
-      onFPSUpdate: (val) => setFps(val),
-      onQualityChange: (val) => setQuality(val),
-      onVolumeChange: (vol) => setVolume(vol * 100),
-      onMute: () => setIsMuted(prev => !prev),
-      onDeath: () => setIsDead(true),
-      onSensitivityChange: (sens) => {
-        setMouseSensitivity(sens);
-        localStorage.setItem('sensitivity', sens.toString());
-      },
-      onLevelChange: (l) => setLevel(l)
+      onLockChange: handleLockChange,
+      onSanityUpdate: handleSanityUpdate,
+      onStaminaUpdate: handleStaminaUpdate,
+      onProximityUpdate: handleProximityUpdate,
+      onFPSUpdate: handleFPSUpdate,
+      onQualityChange: handleQualityChange,
+      onVolumeChange: handleVolumeChange,
+      onMute: handleMute,
+      onDeath: handleDeath,
+      onSensitivityChange: handleSensitivityChange,
+      onLevelChange: handleLevelChange
     });
     engine.init();
     engineRef.current = engine;
@@ -78,7 +119,11 @@ export default function App() {
     return () => {
       engine.dispose();
     };
-  }, []);
+  }, [
+    handleLockChange, handleSanityUpdate, handleStaminaUpdate, handleProximityUpdate, 
+    handleFPSUpdate, handleQualityChange, handleVolumeChange, handleMute, 
+    handleDeath, handleSensitivityChange, handleLevelChange
+  ]);
   const handleStart = () => {
     if (isDead) setIsDead(false);
     engineRef.current?.lock();
@@ -94,7 +139,7 @@ export default function App() {
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-black max-w-none">
       {/* 3D Viewport */}
-      <div ref={containerRef} className="absolute inset-0 z-0" />
+      <div ref={containerRef} className="absolute inset-0 z-0 w-full h-full" />
       {/* CRT Effects Layer */}
       <div className="absolute inset-0 z-50 pointer-events-none overflow-hidden">
         <div className="scanlines opacity-10 absolute inset-0 mix-blend-overlay" />
