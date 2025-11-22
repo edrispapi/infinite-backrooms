@@ -21,7 +21,8 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwind-merge": "^3.4.0",
-    "three": "^0.181.2"
+    "three": "^0.181.2",
+    "url": "^0.11.4"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4",
